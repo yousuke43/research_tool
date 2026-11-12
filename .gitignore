@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# APIキー
+.env
+
+# ローカル設定・キャッシュ・実験結果
+config/settings.json
+config/models_cache.json
+outputs/
+!outputs/.gitkeep
