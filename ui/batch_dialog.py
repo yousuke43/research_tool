@@ -24,13 +24,14 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from models.experiment import Experiment
 from models.spec_source import SpecSource
-from services.batch_runner import BatchWorker
+from services.batch_runner import DEFAULT_PARALLEL_SPECS, MAX_PARALLEL_SPECS, BatchWorker
 from services.openrouter_client import OpenRouterClient
 from utils import file_manager
 from utils.config_manager import DATA_DIR
@@ -56,6 +57,8 @@ class BatchDialog(QDialog):
 
         self._thread: QThread | None = None
         self._worker: BatchWorker | None = None
+        self._running: list[str] = []  # 実行中の仕様 (並列実行なので複数)
+        self._done_count = 0
 
         self._build_ui()
         self._reload_files()
@@ -103,6 +106,20 @@ class BatchDialog(QDialog):
         self.log_edit.setReadOnly(True)
         self.log_edit.setFixedHeight(200)
 
+        self.parallel_spin = QSpinBox()
+        self.parallel_spin.setRange(1, MAX_PARALLEL_SPECS)
+        self.parallel_spin.setValue(DEFAULT_PARALLEL_SPECS)
+        self.parallel_spin.setToolTip(
+            "仕様を何件同時に実行するか。各仕様の中でも生成モデルは並列に実行されるため、\n"
+            "同時に送るリクエスト数は「この値 x 生成モデル数 (最大4)」になります。\n"
+            "OpenRouter のレート制限 (HTTP 429) でエラーが出る場合は値を下げてください。"
+        )
+        parallel_row = QHBoxLayout()
+        parallel_row.addWidget(QLabel("同時に実行する仕様の数:"))
+        parallel_row.addWidget(self.parallel_spin)
+        parallel_row.addWidget(QLabel("(1 にすると従来どおり1件ずつ順番に実行)"))
+        parallel_row.addStretch(1)
+
         self.run_button = QPushButton("実行")
         self.run_button.setMinimumHeight(32)
         self.run_button.clicked.connect(self._on_run)
@@ -119,6 +136,7 @@ class BatchDialog(QDialog):
         layout.addLayout(list_buttons)
         layout.addWidget(self.file_list, 1)
         layout.addWidget(self.model_label)
+        layout.addLayout(parallel_row)
         layout.addWidget(self.status_label)
         layout.addWidget(self.progress_bar)
         layout.addWidget(QLabel("処理状況"))
@@ -220,8 +238,11 @@ class BatchDialog(QDialog):
         self.progress_bar.setValue(0)
         self.run_button.setEnabled(False)
         self.refresh_button.setEnabled(False)
-        self._set_status(f"実行中... (0/{len(sources)})")
-        self._log(f"一括実行開始 ({len(sources)} 件)")
+        self.parallel_spin.setEnabled(False)
+        self._running = []
+        self._done_count = 0
+        self._set_status(f"実行中... (完了 0/{len(sources)})")
+        self._log(f"一括実行開始 ({len(sources)} 件、同時実行 {self.parallel_spin.value()} 件)")
 
         self._thread = QThread(self)
         self._worker = BatchWorker(
@@ -230,6 +251,7 @@ class BatchDialog(QDialog):
             extraction_model=extraction,
             generation_models=generation,
             names=names,
+            max_parallel_specs=self.parallel_spin.value(),
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -246,8 +268,20 @@ class BatchDialog(QDialog):
         self.status_label.setText(message)
 
     def _on_file_started(self, filename: str, index: int, total: int) -> None:
-        self.progress_bar.setValue(index - 1)
-        self._set_status(f"実行中... ({index}/{total}) {filename}")
+        self._running.append(filename)
+        self._update_running_status()
+
+    def _mark_done(self, filename: str) -> None:
+        if filename in self._running:
+            self._running.remove(filename)
+        self._done_count += 1
+        self.progress_bar.setValue(self._done_count)
+        self._update_running_status()
+
+    def _update_running_status(self) -> None:
+        total = self.progress_bar.maximum()
+        running = "、".join(self._running) if self._running else "-"
+        self._set_status(f"実行中... (完了 {self._done_count}/{total})  処理中 {len(self._running)} 件: {running}")
 
     def _on_file_finished(self, filename: str, experiment: object) -> None:
         exp = experiment if isinstance(experiment, Experiment) else None
@@ -256,11 +290,11 @@ class BatchDialog(QDialog):
             ok = sum(1 for r in exp.results if r.ok)
             ng = len(exp.results) - ok
             self._log(f"{filename}: 完了 (成功 {ok} / 失敗 {ng})")
-        self.progress_bar.setValue(self.progress_bar.value() + 1)
+        self._mark_done(filename)
 
     def _on_file_failed(self, filename: str, message: str) -> None:
         self._log(f"{filename}: [エラー] {message}")
-        self.progress_bar.setValue(self.progress_bar.value() + 1)
+        self._mark_done(filename)
 
     def _on_batch_finished(self, experiments: list) -> None:
         self._set_status(f"完了 ({len(experiments)} / {self.progress_bar.maximum()} 件保存)")
@@ -275,6 +309,7 @@ class BatchDialog(QDialog):
             self._thread = None
         self.run_button.setEnabled(True)
         self.refresh_button.setEnabled(True)
+        self.parallel_spin.setEnabled(True)
 
     # ------------------------------------------------------------------ 終了
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt のシグネチャ)

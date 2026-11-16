@@ -1,7 +1,9 @@
 """data/ フォルダの複数仕様をまとめて実行するワーカー.
 
 仕様 (テキストファイル1つ、または Excel の1行) ごとに ExperimentWorker と同じ流れ
-(抽出 -> 各生成モデルで並列生成 -> 保存) を順番に行う。
+(抽出 -> 各生成モデルで並列生成 -> 保存) を行う。
+仕様どうしも最大 max_parallel_specs 件まで同時に実行する
+(同時に飛ぶ API リクエストは最大で 仕様の並列数 x 生成モデルの並列数 (MAX_PARALLEL))。
 1件の抽出/生成に失敗しても、残りの処理は続行する。
 
 GUI スレッドを止めないよう QThread 上で run() される。
@@ -9,8 +11,10 @@ GUI スレッドを止めないよう QThread 上で run() される。
 
 from __future__ import annotations
 
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+
 from PySide6.QtCore import QObject, Signal
 
 from models.experiment import Experiment, GenerationResult
@@ -20,10 +24,13 @@ from services.experiment_runner import MAX_PARALLEL
 from services.openrouter_client import OpenRouterClient
 from utils import file_manager
 
+DEFAULT_PARALLEL_SPECS = 3
+MAX_PARALLEL_SPECS = 8
+
 
 class BatchWorker(QObject):
     progress = Signal(str)                 # 処理状況の1行メッセージ
-    file_started = Signal(str, int, int)   # 表示名, 現在の番号(1始まり), 総数
+    file_started = Signal(str, int, int)   # 表示名, 仕様の番号(1始まり), 総数 (並列実行なので順不同)
     file_finished = Signal(str, object)    # 表示名, Experiment
     file_failed = Signal(str, str)         # 表示名, エラーメッセージ
     finished = Signal(list)                # list[Experiment] (保存できたものだけ)
@@ -35,8 +42,10 @@ class BatchWorker(QObject):
         extraction_model: str,
         generation_models: list[str],
         names: dict[str, str] | None = None,
+        max_parallel_specs: int = DEFAULT_PARALLEL_SPECS,
     ) -> None:
         super().__init__()
+        self.max_parallel_specs = max(1, min(MAX_PARALLEL_SPECS, int(max_parallel_specs)))
         self.client = client
         self.sources = list(sources)
         self.extraction_model = extraction_model
@@ -48,36 +57,48 @@ class BatchWorker(QObject):
         return self.names.get(model_id, model_id)
 
     def request_stop(self) -> None:
-        """現在処理中の仕様の完了後に停止する."""
+        """まだ始まっていない仕様は実行しない (処理中の仕様は最後まで行う)."""
         self._stop_requested = True
 
     # ------------------------------------------------------------------
     def run(self) -> None:
         total = len(self.sources)
-        completed: list[Experiment] = []
+        completed: dict[int, Experiment] = {}
+        stop_notified = threading.Event()
 
-        for index, source in enumerate(self.sources, start=1):
+        def process(index: int, source: SpecSource) -> None:
             if self._stop_requested:
-                self.progress.emit("ユーザーの指示により中断しました")
-                break
+                if not stop_notified.is_set():
+                    stop_notified.set()
+                    self.progress.emit("ユーザーの指示により、未開始の仕様は実行しません")
+                return
 
             self.file_started.emit(source.label, index, total)
-
             try:
                 requirements = source.read_requirements()
             except OSError as exc:
                 self.file_failed.emit(source.label, f"ファイルを読み込めませんでした: {exc}")
-                continue
+                return
             if not requirements:
                 self.file_failed.emit(source.label, "仕様が空です")
-                continue
+                return
 
             experiment = self._run_one(source, requirements, index, total)
             if experiment is not None:
-                completed.append(experiment)
+                completed[index] = experiment
                 self.file_finished.emit(source.label, experiment)
 
-        self.finished.emit(completed)
+        workers = max(1, min(self.max_parallel_specs, total))
+        self.progress.emit(f"仕様を最大 {workers} 件ずつ同時に実行します")
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(process, i, src) for i, src in enumerate(self.sources, start=1)]
+            for future in as_completed(futures):
+                exc = future.exception()
+                if exc is not None:  # 想定外の例外でも他の仕様は続ける
+                    self.progress.emit(f"[エラー] 想定外のエラー: {exc}")
+
+        # 完了順ではなく元の並び順で返す
+        self.finished.emit([completed[i] for i in sorted(completed)])
 
     # ------------------------------------------------------------------
     def _run_one(

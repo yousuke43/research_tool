@@ -86,12 +86,18 @@ def save_experiment(experiment: Experiment) -> Path:
         folder_base = f"{safe_component(experiment.source_name)}_{stamp}"
     else:
         folder_base = stamp
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     out_dir = OUTPUTS_DIR / folder_base
     suffix = 2
-    while out_dir.exists():  # 同じ秒に2回実行した場合
-        out_dir = OUTPUTS_DIR / f"{folder_base}_{suffix}"
-        suffix += 1
-    out_dir.mkdir(parents=True)
+    while True:
+        # 同じ秒に同名の実行が重なった場合 (一括実行の並列処理を含む) は _2, _3 ... を付ける。
+        # exists() で確かめてから作ると並列時に競合するので、作成の成否で判定する。
+        try:
+            out_dir.mkdir()
+            break
+        except FileExistsError:
+            out_dir = OUTPUTS_DIR / f"{folder_base}_{suffix}"
+            suffix += 1
 
     (out_dir / "input.txt").write_text(experiment.requirements, encoding="utf-8")
 

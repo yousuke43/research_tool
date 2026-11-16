@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from models.decision_table import TableSource
-from ui.comparison_view import ComparisonView
+from ui.comparison_tabs import add_comparison_tabs
 from ui.result_view import ResultView
 from utils import file_manager
 
@@ -180,12 +180,8 @@ class HistoryDialog(QDialog):
                 )
                 for i, r in enumerate(results)
             ]
-            self.result_tabs.addTab(
-                ComparisonView(sources, document=record.get("requirements", ""), output_dir=run["dir"]),
-                "比較",
-            )
-
-        if self.result_tabs.count():
+            add_comparison_tabs(self.result_tabs, sources, record.get("requirements", ""), run["dir"])
+        elif self.result_tabs.count():
             self.result_tabs.setCurrentIndex(0)
 
     # ------------------------------------------------------------ フォルダを開く

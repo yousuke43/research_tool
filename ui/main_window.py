@@ -39,7 +39,7 @@ from services.experiment_runner import ExperimentWorker
 from services.model_service import ModelFetchWorker
 from services.openrouter_client import OpenRouterClient
 from ui.batch_dialog import BatchDialog
-from ui.comparison_view import ComparisonView
+from ui.comparison_tabs import add_comparison_tabs
 from ui.history_dialog import HistoryDialog
 from ui.result_view import ResultView
 from ui.settings_dialog import SettingsDialog
@@ -412,12 +412,9 @@ class MainWindow(QMainWindow):
                 )
                 for result in experiment.results
             ]
-            self.result_tabs.addTab(
-                ComparisonView(sources, document=experiment.requirements, output_dir=experiment.output_dir),
-                "比較",
-            )
-
-        self.result_tabs.setCurrentIndex(0)
+            add_comparison_tabs(self.result_tabs, sources, experiment.requirements, experiment.output_dir)
+        else:
+            self.result_tabs.setCurrentIndex(0)
 
     # ------------------------------------------------------------ 出力フォルダ
     def _open_output_dir(self) -> None:

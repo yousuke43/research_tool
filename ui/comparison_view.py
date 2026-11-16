@@ -53,6 +53,10 @@ _CATEGORY_LABEL_JA = {ROW_CATEGORY_CONDITION: "条件", ROW_CATEGORY_ACTION: "�
 _CONFLICT_COLOR = QColor("#ffd3d3")  # 同じ組み合わせなのに動作の結果が違う
 _MISSING_COLOR = QColor("#eeeeee")  # そのモデルはこの組み合わせのルールを生成していない
 _SPACER_COLOR = QColor("#dddddd")  # 組み合わせ同士の区切り
+_GROUP_HEADER_COLOR = QColor("#f4f6fa")  # 縦表示の「組合せ」「条件」セル (組み合わせ内で共通の値)
+
+ORIENTATION_HORIZONTAL = "horizontal"
+ORIENTATION_VERTICAL = "vertical"
 
 
 class ComparisonView(QWidget):
@@ -64,9 +68,14 @@ class ComparisonView(QWidget):
         parent: QWidget | None = None,
         document: str = "",
         output_dir: str = "",
+        orientation: str = ORIENTATION_HORIZONTAL,
     ) -> None:
         super().__init__(parent)
         self._sources = sources
+        # horizontal: 列 = 組み合わせ×モデル (横に並べる) / vertical: 行 = 組み合わせ×モデル (縦に並べる)
+        self._orientation = orientation
+        # 縦表示で、各列がどの組み合わせか (番号, 組み合わせ)
+        self._col_groups: list[tuple[int, ComparisonGroup]] = []
         self._document = document  # 追加記述案の作成で LLM に渡す元の文書 (Requirements)
         self._output_dir = output_dir  # 追加記述案の保存先となる実行結果フォルダ
         self._columns: list[_Column] = []
@@ -180,8 +189,7 @@ class ComparisonView(QWidget):
             self.resolution_group.hide()
             self.diff_only_check.setEnabled(False)
             self.summary_label.setText("")
-            self.table.clear()
-            self._columns = []
+            self._clear_table()
             self.table.setRowCount(0)
             self.table.setColumnCount(0)
             self.notice_label.setText(
@@ -248,6 +256,13 @@ class ComparisonView(QWidget):
         """比較表で選択されているセルが属する組み合わせを (番号, 組み合わせ) で返す."""
         selected: list[tuple[int, ComparisonGroup]] = []
         seen: set[int] = set()
+        if self._orientation == ORIENTATION_VERTICAL:
+            for index in sorted(self.table.selectedIndexes(), key=lambda i: i.column()):
+                picked = self._col_groups[index.column()] if index.column() < len(self._col_groups) else None
+                if picked is not None and picked[0] not in seen:
+                    seen.add(picked[0])
+                    selected.append(picked)
+            return selected
         for index in sorted(self.table.selectedIndexes(), key=lambda i: i.column()):
             if index.column() >= len(self._columns):
                 continue
@@ -279,8 +294,7 @@ class ComparisonView(QWidget):
         result = self._result
         table_keys = self._alignment.table_keys
 
-        self.table.clear()
-        self._columns = []
+        self._clear_table()
 
         total = len(result.groups)
         conflicts = result.conflict_count
@@ -303,7 +317,106 @@ class ComparisonView(QWidget):
         if self.diff_only_check.isChecked():
             numbered_groups = [(n, g) for n, g in numbered_groups if g.has_conflict]
 
-        self._populate_table(result, table_keys, numbered_groups)
+        if self._orientation == ORIENTATION_VERTICAL:
+            self._populate_vertical(result, table_keys, numbered_groups)
+        else:
+            self._populate_table(result, table_keys, numbered_groups)
+
+    def _clear_table(self) -> None:
+        self.table.clear()
+        self.table.clearSpans()
+        self.table.setRowCount(0)
+        self.table.setColumnCount(0)
+        self._columns = []
+        self._col_groups = []
+
+    def _populate_vertical(
+        self,
+        result: ComparisonResult,
+        table_keys: list[str],
+        numbered_groups: list[tuple[int, ComparisonGroup]],
+    ) -> None:
+        """縦表示: 通常のデシジョンテーブルと同じく条件を行に並べ、1列 = 1組み合わせにする.
+
+        条件の行は1つずつ (組み合わせ内で共通の値)。動作 (結果) の行だけを
+        モデルの数だけ縦に並べるので、同じ列を上から下へ見ればモデル間の違いがわかる。
+
+            [条件] A               | Y | N | ...
+            [条件] B               | N | N | ...
+            -------------------------------------
+            [動作] 料金 / モデル1   | 800 | ...
+            [動作] 料金 / モデル2   | 700 | ...   <- 食い違いは赤
+        """
+        # 行の組み立て: ("condition", group) / ("action", group, table_key) / ("spacer",)
+        row_plan: list[tuple] = [("condition", g) for g in result.condition_groups]
+        for act_group in result.action_groups:
+            row_plan.append(("spacer",))
+            row_plan.extend(("action", act_group, key) for key in table_keys)
+
+        self.table.verticalHeader().setVisible(True)
+        self.table.setRowCount(len(row_plan))
+        self.table.setColumnCount(len(numbered_groups))
+        self.table.setHorizontalHeaderLabels(
+            [f"組合せ{n}" + (" ⚠" if g.has_conflict else "") for n, g in numbered_groups]
+        )
+        vertical_labels = []
+        for plan in row_plan:
+            if plan[0] == "condition":
+                vertical_labels.append(f"[条件] {plan[1].display_label}")
+            elif plan[0] == "action":
+                vertical_labels.append(f"[動作] {plan[1].display_label}  /  {self._titles.get(plan[2], plan[2])}")
+            else:
+                vertical_labels.append("")
+        self.table.setVerticalHeaderLabels(vertical_labels)
+        self._col_groups = list(numbered_groups)
+
+        for col, (number, group) in enumerate(numbered_groups):
+            header_item = self.table.horizontalHeaderItem(col)
+            if group.has_conflict:
+                header_item.setToolTip("この組み合わせはモデルによって結果が異なります。")
+
+            for row, plan in enumerate(row_plan):
+                if plan[0] == "spacer":
+                    item = QTableWidgetItem("")
+                    item.setFlags(Qt.ItemIsEnabled)
+                    item.setBackground(QBrush(_SPACER_COLOR))
+                elif plan[0] == "condition":
+                    item = self._plain_item(group.condition_display.get(plan[1].group_id, ""))
+                    item.setBackground(QBrush(_GROUP_HEADER_COLOR))
+                else:
+                    item = self._action_item(group, plan[1], plan[2])
+                self.table.setItem(row, col, item)
+
+        self.table.resizeColumnsToContents()
+        for row, plan in enumerate(row_plan):
+            if plan[0] == "spacer":
+                self.table.setRowHeight(row, 6)
+        self.table.horizontalHeader().setMinimumHeight(30)
+
+    def _action_item(self, group: ComparisonGroup, act_group: LabelGroup, table_key: str) -> QTableWidgetItem:
+        """縦表示の動作セル (あるモデル・ある組み合わせの結果)."""
+        title = self._titles.get(table_key, table_key)
+        entries = [e for e in group.entries if e.table_key == table_key]
+        if not entries:
+            item = self._plain_item("—")
+            item.setBackground(QBrush(_MISSING_COLOR))
+            item.setToolTip(f"{title} はこの組み合わせのルールを生成していません。")
+            return item
+
+        # 同じモデルの複数ルールが同じ組み合わせに入る場合 (表記ゆれ未解決など) は並べて表示する
+        values = [e.action_values.get(act_group.group_id, "") for e in entries]
+        item = self._plain_item(" / ".join(values))
+        item.setToolTip(f"{title} の {', '.join(e.rule_id for e in entries)}")
+        if act_group.group_id in group.conflicting_action_groups:
+            item.setBackground(QBrush(_CONFLICT_COLOR))
+        return item
+
+    @staticmethod
+    def _plain_item(text: str) -> QTableWidgetItem:
+        item = QTableWidgetItem(text)
+        item.setTextAlignment(Qt.AlignCenter)
+        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        return item
 
     def _populate_table(
         self,
@@ -311,6 +424,7 @@ class ComparisonView(QWidget):
         table_keys: list[str],
         numbered_groups: list[tuple[int, ComparisonGroup]],
     ) -> None:
+        self.table.verticalHeader().setVisible(True)
         columns = _build_columns(table_keys, numbered_groups)
         self._columns = columns
         row_specs = [(ROW_CATEGORY_CONDITION, g) for g in result.condition_groups] + [
