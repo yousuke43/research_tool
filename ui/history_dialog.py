@@ -14,9 +14,11 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -28,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from models.decision_table import TableSource
-from ui.comparison_tabs import add_comparison_tabs
+from ui.comparison_tabs import add_comparison_tabs, add_framework_tabs
 from ui.result_view import ResultView
 from utils import file_manager
 
@@ -59,6 +61,25 @@ class HistoryDialog(QDialog):
         self.refresh_button.clicked.connect(self._reload_runs)
         self.open_folder_button = QPushButton("出力フォルダを開く")
         self.open_folder_button.clicked.connect(self._open_selected_folder)
+        self.export_button = QPushButton("表示中の結果をCSVに書き出す")
+        self.export_button.setToolTip(
+            "一覧に表示されている (絞り込み後の) 実行結果をまとめて、解析用の CSV を書き出します。\n"
+            "summary.csv: 仕様×モデルごとの状態・時間・トークン数・不一致件数\n"
+            "rule_results.csv: 仕様×ルール×モデル×動作ごとの値と判定 (ロング形式)"
+        )
+        self.export_button.clicked.connect(self._export_csv)
+
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("仕様名・番号・テーマ・モデル・フォルダ名で絞り込み")
+        self.search_edit.textChanged.connect(self._apply_filter)
+        self.method_filter = QComboBox()
+        self.method_filter.addItem("すべての方式", "")
+        self.method_filter.addItem("従来方式", "conventional")
+        self.method_filter.addItem("新方式 (共通DT)", "common_framework")
+        self.method_filter.currentIndexChanged.connect(self._apply_filter)
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(self.search_edit, 1)
+        filter_row.addWidget(self.method_filter)
 
         left_buttons = QHBoxLayout()
         left_buttons.addWidget(self.refresh_button)
@@ -66,8 +87,10 @@ class HistoryDialog(QDialog):
 
         left_box = QVBoxLayout()
         left_box.addWidget(QLabel("実行履歴 (新しい順)"))
+        left_box.addLayout(filter_row)
         left_box.addWidget(self.run_list, 1)
         left_box.addLayout(left_buttons)
+        left_box.addWidget(self.export_button)
         left_widget = QWidget()
         left_widget.setLayout(left_box)
 
@@ -98,19 +121,77 @@ class HistoryDialog(QDialog):
         runs = file_manager.list_output_runs()
         for run in runs:
             label = run["started_at"] or run["folder_name"]
+            if run.get("generation_method") == "common_framework":
+                label += "  [共通DT]"
             if run.get("source_name"):
                 label += f"  [{run['source_name']}]"
+            if run.get("batch_name"):
+                label += f"  (一括: {run['batch_name']})"
             if run.get("extraction_model_name"):
                 label += f"  抽出:{run['extraction_model_name']}"
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, run)
             item.setToolTip(run.get("requirements_preview", ""))
             self.run_list.addItem(item)
+        self._apply_filter()
 
         if not runs:
             self.summary_label.setText("outputs/ にまだ実験結果がありません。")
         else:
             self.summary_label.setText(f"{len(runs)} 件の実行結果があります。左の一覧から選択してください。")
+
+    def _apply_filter(self) -> None:
+        if not hasattr(self, "search_edit"):
+            return
+        keyword = self.search_edit.text().strip().lower()
+        method = self.method_filter.currentData()
+        for i in range(self.run_list.count()):
+            item = self.run_list.item(i)
+            run = item.data(Qt.UserRole)
+            meta = " ".join(str(v) for v in (run.get("source_meta") or {}).values())
+            text = " ".join([item.text(), run.get("folder_name", ""), meta,
+                             " ".join(run.get("generation_models", [])), run.get("framework_id", "")]).lower()
+            hidden = (bool(keyword) and keyword not in text) or (
+                bool(method) and run.get("generation_method", "conventional") != method
+            )
+            item.setHidden(hidden)
+
+    def _visible_runs(self) -> list[dict]:
+        return [
+            self.run_list.item(i).data(Qt.UserRole)
+            for i in range(self.run_list.count())
+            if not self.run_list.item(i).isHidden()
+        ]
+
+    def _export_csv(self) -> None:
+        from datetime import datetime
+
+        from services.result_export import export_records
+
+        runs = self._visible_runs()
+        if not runs:
+            QMessageBox.information(self, "CSV 書き出し", "書き出す実行結果がありません。")
+            return
+        records = []
+        for run in runs:
+            try:
+                records.append((file_manager.load_experiment_record(run["dir"]), run["dir"]))
+            except (OSError, ValueError):
+                continue
+        dest = file_manager.OUTPUTS_DIR / "exports" / f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        try:
+            n_summary, n_rules = export_records(dest, records)
+        except OSError as exc:
+            QMessageBox.warning(self, "CSV 書き出し", f"書き出せませんでした: {exc}")
+            return
+        answer = QMessageBox.question(
+            self, "CSV 書き出し",
+            f"{len(records)} 件の実行結果を書き出しました。\n{dest}\n"
+            f"summary.csv: {n_summary} 行 / rule_results.csv: {n_rules} 行\n\nフォルダを開きますか?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
+        )
+        if answer == QMessageBox.Yes:
+            self._open_path(dest)
 
     def _selected_run(self) -> dict | None:
         item = self.run_list.currentItem()
@@ -139,7 +220,21 @@ class HistoryDialog(QDialog):
         )
         if record.get("source_name"):
             summary += f"  /  仕様ファイル: {record['source_name']}"
+        method = record.get("generation_method") or "conventional"
+        summary += "  /  方式: " + ("新方式 (共通DT枠組み)" if method == "common_framework" else "従来方式")
         summary += f"\n成功 {ok} / 失敗 {total - ok}"
+        if record.get("aborted_reason"):
+            summary += f"  /  ⚠ {record['aborted_reason']}"
+        if record.get("framework_error"):
+            summary += f"  /  ⚠ {record['framework_error']}"
+        fw_source = record.get("framework_source") or {}
+        if fw_source:
+            summary += (
+                f"\n使用した枠組み: {fw_source.get('framework_id', '')}"
+                + (f" (承認 {fw_source['approved_at'].replace('T', ' ')})" if fw_source.get("approved_at") else "")
+                + (" ・修正版" if fw_source.get("edited") else "")
+                + (f" ・メモ: {fw_source['note']}" if fw_source.get("note") else "")
+            )
         self.summary_label.setText(summary)
 
         extraction_caption = (
@@ -155,6 +250,7 @@ class HistoryDialog(QDialog):
             caption = (
                 f"{result.get('model_id', '')}  ({result.get('elapsed_sec', 0):.1f}秒)"
                 f"{_format_tokens(result)}"
+                + ("  /  保存済みの成功結果を再利用" if result.get("reused_from_cache") else "")
             )
             if ok_flag:
                 view = ResultView(result.get("content", ""), caption=caption)
@@ -183,6 +279,7 @@ class HistoryDialog(QDialog):
             add_comparison_tabs(self.result_tabs, sources, record.get("requirements", ""), run["dir"])
         elif self.result_tabs.count():
             self.result_tabs.setCurrentIndex(0)
+        add_framework_tabs(self.result_tabs, record)
 
     # ------------------------------------------------------------ フォルダを開く
     def _open_selected_folder(self) -> None:
@@ -190,7 +287,9 @@ class HistoryDialog(QDialog):
         if run is None:
             QMessageBox.information(self, "出力フォルダを開く", "一覧から実行結果を選択してください。")
             return
-        target = Path(run["dir"])
+        self._open_path(Path(run["dir"]))
+
+    def _open_path(self, target: Path) -> None:
         try:
             if sys.platform == "win32":
                 os.startfile(str(target))  # noqa: S606 (Windows 標準の方法)

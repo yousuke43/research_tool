@@ -3,7 +3,8 @@
 OpenRouter から取得したモデル一覧を表示し、
  - 抽出モデル: 1つ
  - 生成モデル: 複数 (チェックボックス)
-を選択する。選択内容は呼び出し側 (MainWindow) が settings.json へ保存する。
+を選択する。あわせて生成設定 (新方式の条件数上限・バッチサイズ・出力上限 max_tokens、
+成功結果の再利用) も設定する。選択内容は呼び出し側 (MainWindow) が settings.json へ保存する。
 """
 
 from __future__ import annotations
@@ -11,14 +12,17 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QThread
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
@@ -29,6 +33,7 @@ from PySide6.QtWidgets import (
 from services import model_service
 from services.model_service import ModelFetchWorker
 from services.openrouter_client import OpenRouterClient
+from utils.config_manager import DEFAULT_SETTINGS
 
 COLUMNS = ["表示名", "Model ID", "コンテキスト"]
 
@@ -105,6 +110,8 @@ class SettingsDialog(QDialog):
         self.warning_label.setStyleSheet("color: #b00020;")
         self.warning_label.setWordWrap(True)
 
+        generation_box = self._build_generation_settings()
+
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
@@ -115,7 +122,65 @@ class SettingsDialog(QDialog):
         layout.addWidget(splitter, 1)
         layout.addWidget(self.selection_label)
         layout.addWidget(self.warning_label)
+        layout.addWidget(generation_box)
         layout.addWidget(self.buttons)
+
+    def _setting(self, key: str):
+        return self._settings.get(key, DEFAULT_SETTINGS[key])
+
+    def _spin(self, key: str, low: int, high: int, step: int, tooltip: str, special: str = "") -> QSpinBox:
+        spin = QSpinBox()
+        spin.setRange(low, high)
+        spin.setSingleStep(step)
+        spin.setValue(int(self._setting(key)))
+        spin.setToolTip(tooltip)
+        if special:
+            spin.setSpecialValueText(special)
+        return spin
+
+    def _build_generation_settings(self) -> QGroupBox:
+        box = QGroupBox("生成設定")
+        self.max_conditions_spin = self._spin(
+            "framework_max_conditions", 1, 12, 1,
+            "新方式で全組合せ (2^n 通り) を自動生成する条件数の上限。\n"
+            "これを超える場合は警告を出し、共通DTの生成は行いません (抽出結果は保存します)。",
+        )
+        self.batch_size_spin = self._spin(
+            "framework_batch_size", 1, 4096, 8,
+            "新方式で1回のリクエストに含めるルール数。ルール数がこれを超えると複数バッチに分けて生成し、\n"
+            "最後に統合します (ルールIDと条件組合せはバッチ間でも固定)。",
+        )
+        self.framework_tokens_spin = self._spin(
+            "framework_max_tokens", 0, 1_000_000, 1000,
+            "新方式の出力上限 (max_tokens)。推論 (reasoning) トークンも含まれるモデルがあるため、\n"
+            "小さくしすぎると途中で切れます。0 = 指定しない (モデルの既定値)。",
+            special="指定しない",
+        )
+        self.conventional_tokens_spin = self._spin(
+            "conventional_max_tokens", 0, 1_000_000, 1000,
+            "従来方式の出力上限 (max_tokens)。0 = 指定しない (これまでどおり)。",
+            special="指定しない",
+        )
+        self.extraction_tokens_spin = self._spin(
+            "extraction_max_tokens", 0, 1_000_000, 1000,
+            "抽出の出力上限 (max_tokens)。0 = 指定しない (これまでどおり)。",
+            special="指定しない",
+        )
+        self.reuse_check = QCheckBox("成功済みの抽出・生成結果を再利用する (失敗した処理だけ再実行)")
+        self.reuse_check.setChecked(bool(self._setting("reuse_cached_results")))
+        self.reuse_check.setToolTip(
+            "モデル・要求仕様・プロンプト・生成方式・抽出項目 (実際に送るプロンプト全文) がすべて同じ場合だけ、\n"
+            "以前に成功した結果を再利用します。同じ条件で再サンプリングしたい場合はチェックを外してください。"
+        )
+
+        form = QFormLayout(box)
+        form.addRow("新方式: 全組合せを生成する条件数の上限", self.max_conditions_spin)
+        form.addRow("新方式: 1リクエストあたりのルール数 (バッチサイズ)", self.batch_size_spin)
+        form.addRow("新方式: 出力上限 max_tokens", self.framework_tokens_spin)
+        form.addRow("従来方式: 出力上限 max_tokens", self.conventional_tokens_spin)
+        form.addRow("抽出: 出力上限 max_tokens", self.extraction_tokens_spin)
+        form.addRow(self.reuse_check)
+        return box
 
     # ------------------------------------------------------------- 一覧表示
     def _populate(self) -> None:
@@ -248,6 +313,12 @@ class SettingsDialog(QDialog):
         return {
             "extraction_model": self._current_extraction_model(),
             "generation_models": self._checked_generation_models(),
+            "framework_max_conditions": self.max_conditions_spin.value(),
+            "framework_batch_size": self.batch_size_spin.value(),
+            "framework_max_tokens": self.framework_tokens_spin.value(),
+            "conventional_max_tokens": self.conventional_tokens_spin.value(),
+            "extraction_max_tokens": self.extraction_tokens_spin.value(),
+            "reuse_cached_results": self.reuse_check.isChecked(),
         }
 
     def accept(self) -> None:

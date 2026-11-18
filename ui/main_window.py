@@ -17,6 +17,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread
 from PySide6.QtWidgets import (
+    QComboBox,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -38,13 +39,14 @@ from services import model_service
 from services.experiment_runner import ExperimentWorker
 from services.model_service import ModelFetchWorker
 from services.openrouter_client import OpenRouterClient
+from services.pipeline import RunOptions
 from ui.batch_dialog import BatchDialog
-from ui.comparison_tabs import add_comparison_tabs
+from ui.comparison_tabs import add_comparison_tabs, add_framework_tabs
 from ui.history_dialog import HistoryDialog
 from ui.result_view import ResultView
 from ui.settings_dialog import SettingsDialog
 from utils import config_manager
-from utils.config_manager import OUTPUTS_DIR
+from utils.config_manager import GENERATION_METHODS, OUTPUTS_DIR
 
 
 class MainWindow(QMainWindow):
@@ -83,11 +85,15 @@ class MainWindow(QMainWindow):
         self.batch_button.clicked.connect(self._open_batch_dialog)
         self.history_button = QPushButton("過去の結果を見る...")
         self.history_button.clicked.connect(self._open_history_dialog)
+        self.framework_button = QPushButton("共通DT枠組み...")
+        self.framework_button.setToolTip("保存した共通DT枠組みを確認・承認します (新方式の2段階実行用)。")
+        self.framework_button.clicked.connect(self._open_framework_dialog)
 
         settings_bar = QHBoxLayout()
         settings_bar.addWidget(self.model_label, 1)
         settings_bar.addWidget(self.settings_button)
         settings_bar.addWidget(self.batch_button)
+        settings_bar.addWidget(self.framework_button)
         settings_bar.addWidget(self.history_button)
         settings_bar.addWidget(self.open_output_button)
 
@@ -104,6 +110,19 @@ class MainWindow(QMainWindow):
         self.run_button.setMinimumWidth(140)
         self.run_button.clicked.connect(self._on_run)
 
+        # 生成方式の選択 (従来方式 / 新方式)。選択は settings.json に保存する
+        self.method_combo = QComboBox()
+        for key, label in GENERATION_METHODS.items():
+            self.method_combo.addItem(label, key)
+        index = self.method_combo.findData(self.settings.get("generation_method"))
+        self.method_combo.setCurrentIndex(max(0, index))
+        self.method_combo.setToolTip(
+            "従来方式: 各生成モデルが Decision Table 全体を生成します。\n"
+            "新方式: 条件の全組合せ (共通DT枠組み) をプログラムで作り、全モデルに同じ枠組みを渡して\n"
+            "各ルールの動作結果だけを補完させます (条件数の上限などは「モデル設定...」で変更できます)。"
+        )
+        self.method_combo.currentIndexChanged.connect(self._on_method_changed)
+
         self.status_label = QLabel("待機中")
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(False)
@@ -112,6 +131,8 @@ class MainWindow(QMainWindow):
         self.progress_bar.setFixedWidth(200)
 
         run_bar = QHBoxLayout()
+        run_bar.addWidget(QLabel("生成方式:"))
+        run_bar.addWidget(self.method_combo)
         run_bar.addWidget(self.run_button)
         run_bar.addWidget(self.status_label, 1)
         run_bar.addWidget(self.progress_bar)
@@ -207,13 +228,20 @@ class MainWindow(QMainWindow):
             self.model_label.setStyleSheet("")
         self.model_label.setText(text)
 
+    def _on_method_changed(self) -> None:
+        self.settings["generation_method"] = self.method_combo.currentData()
+        try:
+            config_manager.save_settings(self.settings)
+        except OSError as exc:
+            self._log(f"[警告] 設定を保存できませんでした: {exc}")
+
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.client, self.settings, self.models, self)
         accepted = dialog.exec() == SettingsDialog.Accepted
         # ダイアログ内で一覧を更新している場合があるので取り込む
         self.models = dialog.models
         if accepted:
-            self.settings = dialog.selected_settings()
+            self.settings = {**self.settings, **dialog.selected_settings()}
             try:
                 config_manager.save_settings(self.settings)
                 self._log(f"モデル設定を保存しました: {config_manager.SETTINGS_PATH}")
@@ -234,7 +262,13 @@ class MainWindow(QMainWindow):
             )
             return
         dialog = BatchDialog(self.client, self.settings, self.models, self)
+        dialog.method_combo.setCurrentIndex(self.method_combo.currentIndex())
         dialog.exec()
+
+    def _open_framework_dialog(self) -> None:
+        from ui.framework_dialog import FrameworkDialog
+
+        FrameworkDialog(self.settings, self).exec()
 
     # ------------------------------------------------------------ 過去の結果
     def _open_history_dialog(self) -> None:
@@ -316,12 +350,15 @@ class MainWindow(QMainWindow):
         self.log_edit.clear()
         self.result_tabs.clear()
         self._show_placeholder()
+        options = RunOptions.from_settings(self.settings, method=self.method_combo.currentData())
         self.run_button.setEnabled(False)
         self.settings_button.setEnabled(False)
+        self.method_combo.setEnabled(False)
         self.progress_bar.setRange(0, 0)  # 不定 (処理中)
         self._set_status("実行中...")
         self._log(
-            f"実験開始 (抽出: {extraction} / 生成: {len(generation)} モデル)"
+            f"実験開始 (抽出: {extraction} / 生成: {len(generation)} モデル / "
+            f"方式: {GENERATION_METHODS.get(options.method, options.method)})"
         )
 
         self._run_thread = QThread(self)
@@ -331,6 +368,7 @@ class MainWindow(QMainWindow):
             extraction_model=extraction,
             generation_models=generation,
             names=names,
+            options=options,
         )
         self._run_worker.moveToThread(self._run_thread)
         self._run_thread.started.connect(self._run_worker.run)
@@ -352,6 +390,11 @@ class MainWindow(QMainWindow):
         ok = sum(1 for r in experiment.results if r.ok)
         ng = len(experiment.results) - ok
         summary = f"完了 (成功 {ok} / 失敗 {ng})"
+        if experiment.framework_status in ("too_many_conditions", "invalid_items"):
+            summary = "完了 (共通DTは生成していません)"
+            QMessageBox.warning(self, "共通DTを生成できません", experiment.framework_error + "\n\n抽出結果は保存しました。")
+        elif experiment.aborted_reason:
+            QMessageBox.warning(self, "実行を停止しました", experiment.aborted_reason)
         self._set_status(summary)
         if experiment.output_dir:
             self.statusBar().showMessage(f"{summary}  保存先: {experiment.output_dir}")
@@ -374,6 +417,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(1)
         self.run_button.setEnabled(True)
         self.settings_button.setEnabled(True)
+        self.method_combo.setEnabled(True)
 
     # -------------------------------------------------------------- 結果表示
     def _show_results(self, experiment: Experiment) -> None:
@@ -415,6 +459,7 @@ class MainWindow(QMainWindow):
             add_comparison_tabs(self.result_tabs, sources, experiment.requirements, experiment.output_dir)
         else:
             self.result_tabs.setCurrentIndex(0)
+        add_framework_tabs(self.result_tabs, experiment.to_dict())
 
     # ------------------------------------------------------------ 出力フォルダ
     def _open_output_dir(self) -> None:

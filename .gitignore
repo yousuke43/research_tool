@@ -11,3 +11,6 @@ config/settings.json
 config/models_cache.json
 outputs/
 !outputs/.gitkeep
+
+# Excel が開いている間に作る一時ファイル
+~$*

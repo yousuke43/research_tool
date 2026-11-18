@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -62,6 +62,9 @@ ORIENTATION_VERTICAL = "vertical"
 class ComparisonView(QWidget):
     """TableSource のリストを受け取り、比較結果タブとして表示するウィジェット."""
 
+    # 比較対象から外したモデル (set[str]) が利用者の操作で変わった。もう一方の比較タブと同期する用
+    excluded_changed = Signal(object)
+
     def __init__(
         self,
         sources: list[TableSource],
@@ -82,12 +85,15 @@ class ComparisonView(QWidget):
         self._titles: dict[str, str] = {s.key: s.title for s in sources}
         self._tables: dict[str, DecisionTable] = {}
         self._parse_errors: dict[str, str] = {}
+        self._excluded: set[str] = set()  # 利用者が「比較対象から外す」にしたモデル (table key)
+        self._target_checks: dict[str, QCheckBox] = {}
         self._manual_aliases: list[AliasGroup] = []
         self._alignment: LabelAlignment | None = None
         self._result: ComparisonResult | None = None
 
         self._build_ui()
         self._parse_sources()
+        self._build_target_checks()
         self._refresh()
 
     # ------------------------------------------------------------------ UI
@@ -141,7 +147,11 @@ class ComparisonView(QWidget):
         self.additional_button.setEnabled(bool(self._document.strip()))
         if not self._document.strip():
             self.additional_button.setToolTip("元の文書 (Requirements) が無いため使用できません。")
+        # 比較対象のモデルを選ぶチェックボックス (中身は _build_target_checks で作る)
+        self.target_bar = QHBoxLayout()
+        self.target_bar.addWidget(QLabel("比較対象:"))
         top_bar = QHBoxLayout()
+        top_bar.addLayout(self.target_bar)
         top_bar.addStretch(1)
         top_bar.addWidget(self.additional_button)
 
@@ -163,6 +173,38 @@ class ComparisonView(QWidget):
             except DecisionTableParseError as exc:
                 self._parse_errors[source.key] = str(exc)
 
+    # ------------------------------------------------------------ 比較対象
+    def _build_target_checks(self) -> None:
+        for key in self._tables:
+            check = QCheckBox(self._titles.get(key, key))
+            check.setChecked(True)
+            check.setToolTip(f"{key}\nチェックを外すと、このモデルを比較対象から外します。")
+            check.toggled.connect(self._on_target_toggled)
+            self.target_bar.addWidget(check)
+            self._target_checks[key] = check
+
+    def _on_target_toggled(self) -> None:
+        excluded = {key for key, check in self._target_checks.items() if not check.isChecked()}
+        if excluded == self._excluded:
+            return
+        self._excluded = excluded
+        self._refresh()
+        self.excluded_changed.emit(set(excluded))
+
+    def set_excluded(self, excluded: set[str]) -> None:
+        """外部 (もう一方の比較タブ) から比較対象を合わせる."""
+        if set(excluded) == self._excluded:
+            return
+        for key, check in self._target_checks.items():
+            check.blockSignals(True)
+            check.setChecked(key not in excluded)
+            check.blockSignals(False)
+        self._excluded = {key for key in excluded if key in self._target_checks}
+        self._refresh()
+
+    def _active_tables(self) -> dict[str, DecisionTable]:
+        return {key: table for key, table in self._tables.items() if key not in self._excluded}
+
     def _excluded_notice(self) -> str:
         failed = [s.title for s in self._sources if not s.ok]
         unparsable = [self._titles[key] for key in self._parse_errors]
@@ -183,7 +225,8 @@ class ComparisonView(QWidget):
         else:
             self.notice_label.hide()
 
-        if len(self._tables) < 2:
+        tables = self._active_tables()
+        if len(tables) < 2:
             self._alignment = None
             self._result = None
             self.resolution_group.hide()
@@ -194,14 +237,16 @@ class ComparisonView(QWidget):
             self.table.setColumnCount(0)
             self.notice_label.setText(
                 (notice + "\n" if notice else "")
-                + f"比較するには正常なデシジョンテーブルが2つ以上必要です (現在 {len(self._tables)} 件)。"
+                + f"比較するには正常なデシジョンテーブルが2つ以上必要です (現在 {len(tables)} 件"
+                + (f"、うち {len(self._excluded)} 件を比較対象から外しています" if self._excluded else "")
+                + ")。"
             )
             self.notice_label.show()
             return
 
         self.diff_only_check.setEnabled(True)
-        self._alignment = align_labels(self._tables, self._manual_aliases)
-        self._result = compare_tables(self._tables, self._alignment)
+        self._alignment = align_labels(tables, self._manual_aliases)
+        self._result = compare_tables(tables, self._alignment)
         self._render_unresolved()
         self._render_table()
 
@@ -279,7 +324,7 @@ class ComparisonView(QWidget):
         dialog = AdditionalDescriptionDialog(
             document=self._document,
             output_dir=self._output_dir,
-            tables=self._tables,
+            tables=self._active_tables(),
             titles=self._titles,
             comparison=self._result,
             selected_groups=self._selected_comparison_groups(),

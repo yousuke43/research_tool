@@ -12,8 +12,8 @@ PROMPT_NAME = "extract"
 
 
 def extract_decision_items(
-    client: OpenRouterClient, model_id: str, requirements: str
+    client: OpenRouterClient, model_id: str, requirements: str, max_tokens: int = 0
 ) -> ChatResult:
     template = load_prompt(PROMPT_NAME)
     prompt = render_prompt(template, requirements=requirements)
-    return client.chat(model_id, prompt)
+    return client.chat(model_id, prompt, max_tokens=max_tokens or None)

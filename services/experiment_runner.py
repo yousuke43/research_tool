@@ -2,27 +2,27 @@
 
     Requirements
       -> 抽出モデルで Decision Items を抽出 (実験につき1回だけ)
-      -> 同じ Requirements + 同じ Decision Items を各生成モデルへ
-      -> Decision Table を生成 (モデルごとに並列)
+      -> 生成方式に応じて各生成モデルで生成 (モデルごとに並列)
+         - 従来方式: 同じ Decision Items から DT 全体を生成
+         - 新方式  : 共通DT枠組み (全条件組合せ) の動作結果だけを補完
       -> outputs/ へ保存
 
+処理本体は services/pipeline.py (一括実行と共通)。
 GUI スレッドを止めないよう QThread 上で run() される。
 進捗は progress シグナルで通知する。
 """
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+import threading
 
 from PySide6.QtCore import QObject, Signal
 
-from models.experiment import Experiment, GenerationResult
-from services import step_runner
+from models.experiment import Experiment
+from services import pipeline
 from services.openrouter_client import OpenRouterClient
+from services.pipeline import MAX_PARALLEL, RunOptions  # noqa: F401 (MAX_PARALLEL は互換のため再公開)
 from utils import file_manager
-
-MAX_PARALLEL = 4
 
 
 class ExperimentWorker(QObject):
@@ -37,6 +37,7 @@ class ExperimentWorker(QObject):
         extraction_model: str,
         generation_models: list[str],
         names: dict[str, str] | None = None,
+        options: RunOptions | None = None,
     ) -> None:
         super().__init__()
         self.client = client
@@ -44,6 +45,8 @@ class ExperimentWorker(QObject):
         self.extraction_model = extraction_model
         self.generation_models = list(generation_models)
         self.names = names or {}
+        self.options = options or RunOptions()
+        self.stop_event = threading.Event()
 
     def _name(self, model_id: str) -> str:
         return self.names.get(model_id, model_id)
@@ -55,58 +58,23 @@ class ExperimentWorker(QObject):
             extraction_model=self.extraction_model,
             extraction_model_name=self._name(self.extraction_model),
         )
-
-        # 1. Decision Items の抽出 (1回だけ)
-        self.progress.emit(f"Decision Items 抽出中... ({self._name(self.extraction_model)})")
         try:
-            chat_result, elapsed = step_runner.run_extraction(
-                self.client, self.extraction_model, self.requirements
+            pipeline.execute(
+                self.client,
+                experiment,
+                self.generation_models,
+                self._name,
+                self.options,
+                self.progress.emit,
+                self.stop_event,
             )
-        except Exception as exc:
+        except pipeline.ExtractionFailed as exc:
             # 抽出に失敗したら生成へは進まない
             self.failed.emit(f"Decision Items の抽出に失敗しました。\n\n{exc}")
             return
-        experiment.decision_items = chat_result.content
-        experiment.extraction_elapsed_sec = elapsed
-        experiment.extraction_prompt_tokens = chat_result.prompt_tokens
-        experiment.extraction_completion_tokens = chat_result.completion_tokens
-        experiment.extraction_total_tokens = chat_result.total_tokens
-        self.progress.emit("Decision Items 抽出完了")
 
-        # 2. Decision Table の生成 (同じ Decision Items を全モデルへ)
-        results: dict[str, GenerationResult] = {}
-        workers = max(1, min(MAX_PARALLEL, len(self.generation_models)))
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {}
-            for model_id in self.generation_models:
-                self.progress.emit(f"{self._name(model_id)} で生成中...")
-                futures[
-                    pool.submit(
-                        step_runner.run_generation,
-                        self.client,
-                        model_id,
-                        self._name(model_id),
-                        self.requirements,
-                        experiment.decision_items,
-                    )
-                ] = model_id
-            for future in as_completed(futures):
-                result = future.result()
-                results[result.model_id] = result
-                if result.ok:
-                    self.progress.emit(
-                        f"生成完了: {result.model_name} ({result.elapsed_sec:.1f}秒)"
-                    )
-                else:
-                    self.progress.emit(f"生成失敗: {result.model_name} - {result.error}")
-
-        # 設定した順番で並べ直す
-        experiment.results = [
-            results[model_id] for model_id in self.generation_models if model_id in results
-        ]
-        experiment.finished_at = datetime.now()
-
-        # 3. 保存 (1モデルだけ失敗していても、残りの結果は保存する)
+        # 保存 (1モデルだけ失敗していても、残りの結果は保存する。
+        # 新方式で条件数が上限を超えた場合も、抽出結果は保存する)
         try:
             out_dir = file_manager.save_experiment(experiment)
             self.progress.emit(f"保存しました: {out_dir}")
