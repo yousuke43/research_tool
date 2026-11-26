@@ -1,6 +1,6 @@
 {
-  "framework_id": "20261120_144917_75cc0c",
-  "created_at": "2026-11-20T14:49:17",
+  "framework_id": "20261126_131720_758ee4",
+  "created_at": "2026-11-26T13:17:20",
   "source_name": "09_テーマパーク_変数追加版_あり",
   "source_label": "ビジネスルール記述まとめ.xlsx / Sheet2 / 09_テーマパーク_変数追加版_あり",
   "source_path": "C:\\Users\\yousu\\research\\tool\\tool\\data\\ビジネスルール記述まとめ.xlsx",
@@ -31,16 +31,28 @@
     },
     "max_tokens": 0
   },
-  "decision_items": "{\n  \"conditions\": [\n    \"来場の14日前までにチケットを購入している\",\n    \"来場日が木曜日である\",\n    \"4名以上で一括購入する\",\n    \"来場日が5月の大型連休（GW）に該当する\",\n    \"来場日が7/1〜8/31に該当する\",\n    \"来場日が10/14〜10/31に該当する\",\n    \"来場日が12/1〜1/31に該当する\"\n  ],\n  \"actions\": [\n    {\n      \"name\": \"最終入場料金\",\n      \"type\": \"value\",\n      \"valueType\": \"int\"\n    }\n  ]\n}",
+  "decision_items": "{\n  \"conditions\": [\n    \"来場の14日前までにチケットを購入している\",\n    \"来場日が木曜日の平日である\",\n    \"4名以上で一括購入する\",\n    \"来場日が5月の大型連休（GW）、7月1日～8月31日、10月14日～10月31日、12月1日～1月31日のいずれかの期間に該当する\"\n  ],\n  \"actions\": [\n    {\n      \"name\": \"最終入場料金\",\n      \"type\": \"value\",\n      \"valueType\": \"int\"\n    }\n  ]\n}",
   "framework": {
+    "method": "common_dt_framework",
+    "version": "1.0",
+    "strategy": "full_combination",
     "conditions": [
-      "来場の14日前までにチケットを購入している",
-      "来場日が木曜日である",
-      "4名以上で一括購入する",
-      "来場日が5月の大型連休（GW）に該当する",
-      "来場日が7/1〜8/31に該当する",
-      "来場日が10/14〜10/31に該当する",
-      "来場日が12/1〜1/31に該当する"
+      {
+        "id": "C1",
+        "text": "来場の14日前までにチケットを購入している"
+      },
+      {
+        "id": "C2",
+        "text": "来場日が木曜日の平日である"
+      },
+      {
+        "id": "C3",
+        "text": "4名以上で一括購入する"
+      },
+      {
+        "id": "C4",
+        "text": "来場日が5月の大型連休（GW）、7月1日～8月31日、10月14日～10月31日、12月1日～1月31日のいずれかの期間に該当する"
+      }
     ],
     "actions": [
       {
@@ -49,17 +61,165 @@
         "valueType": "int"
       }
     ],
-    "condition_count": 7,
-    "total_combinations": 128,
-    "remaining_rules": 128
+    "rule_count": 16,
+    "total_combinations": 16,
+    "excluded_count": 0,
+    "rules": [
+      {
+        "rule_id": "R1",
+        "conditions": {
+          "C1": "Y",
+          "C2": "Y",
+          "C3": "Y",
+          "C4": "Y"
+        }
+      },
+      {
+        "rule_id": "R2",
+        "conditions": {
+          "C1": "Y",
+          "C2": "Y",
+          "C3": "Y",
+          "C4": "N"
+        }
+      },
+      {
+        "rule_id": "R3",
+        "conditions": {
+          "C1": "Y",
+          "C2": "Y",
+          "C3": "N",
+          "C4": "Y"
+        }
+      },
+      {
+        "rule_id": "R4",
+        "conditions": {
+          "C1": "Y",
+          "C2": "Y",
+          "C3": "N",
+          "C4": "N"
+        }
+      },
+      {
+        "rule_id": "R5",
+        "conditions": {
+          "C1": "Y",
+          "C2": "N",
+          "C3": "Y",
+          "C4": "Y"
+        }
+      },
+      {
+        "rule_id": "R6",
+        "conditions": {
+          "C1": "Y",
+          "C2": "N",
+          "C3": "Y",
+          "C4": "N"
+        }
+      },
+      {
+        "rule_id": "R7",
+        "conditions": {
+          "C1": "Y",
+          "C2": "N",
+          "C3": "N",
+          "C4": "Y"
+        }
+      },
+      {
+        "rule_id": "R8",
+        "conditions": {
+          "C1": "Y",
+          "C2": "N",
+          "C3": "N",
+          "C4": "N"
+        }
+      },
+      {
+        "rule_id": "R9",
+        "conditions": {
+          "C1": "N",
+          "C2": "Y",
+          "C3": "Y",
+          "C4": "Y"
+        }
+      },
+      {
+        "rule_id": "R10",
+        "conditions": {
+          "C1": "N",
+          "C2": "Y",
+          "C3": "Y",
+          "C4": "N"
+        }
+      },
+      {
+        "rule_id": "R11",
+        "conditions": {
+          "C1": "N",
+          "C2": "Y",
+          "C3": "N",
+          "C4": "Y"
+        }
+      },
+      {
+        "rule_id": "R12",
+        "conditions": {
+          "C1": "N",
+          "C2": "Y",
+          "C3": "N",
+          "C4": "N"
+        }
+      },
+      {
+        "rule_id": "R13",
+        "conditions": {
+          "C1": "N",
+          "C2": "N",
+          "C3": "Y",
+          "C4": "Y"
+        }
+      },
+      {
+        "rule_id": "R14",
+        "conditions": {
+          "C1": "N",
+          "C2": "N",
+          "C3": "Y",
+          "C4": "N"
+        }
+      },
+      {
+        "rule_id": "R15",
+        "conditions": {
+          "C1": "N",
+          "C2": "N",
+          "C3": "N",
+          "C4": "Y"
+        }
+      },
+      {
+        "rule_id": "R16",
+        "conditions": {
+          "C1": "N",
+          "C2": "N",
+          "C3": "N",
+          "C4": "N"
+        }
+      }
+    ],
+    "exclusions": [],
+    "excluded_rules": []
   },
-  "framework_error": "条件数が 7 個あり、自動生成の上限 (6 個) を超えています (128 通り)。共通DTの生成は行いません (上限は「モデル設定...」の生成設定で変更できます。「共通DT枠組み...」で成立しない組合せを除外して上限以下にすることもできます)。",
+  "framework_error": "",
   "max_conditions": 6,
-  "status": "unusable",
-  "approved_at": "",
+  "status": "approved",
+  "approved_at": "2026-11-26T13:17:43",
   "note": "",
-  "edited": false,
-  "parent_id": "",
+  "edited": true,
+  "parent_id": "20261120_144917_75cc0c",
   "exclusions": [],
   "exclusion_warnings": [],
   "tool_version": {

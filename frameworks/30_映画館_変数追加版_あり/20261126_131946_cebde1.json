@@ -1,6 +1,6 @@
 {
-  "framework_id": "20261120_144946_573a10",
-  "created_at": "2026-11-20T14:49:46",
+  "framework_id": "20261126_131946_cebde1",
+  "created_at": "2026-11-26T13:19:46",
   "source_name": "30_映画館_変数追加版_あり",
   "source_label": "ビジネスルール記述まとめ.xlsx / Sheet2 / 30_映画館_変数追加版_あり",
   "source_path": "C:\\Users\\yousu\\research\\tool\\tool\\data\\ビジネスルール記述まとめ.xlsx",
@@ -31,16 +31,28 @@
     },
     "max_tokens": 0
   },
-  "decision_items": "{\n  \"conditions\": [\n    \"上映日が月曜日から木曜日である\",\n    \"上映開始時刻が18時以前である\",\n    \"学生証を提示している\",\n    \"上映開始1時間前までの時点で空席率が80%以上である\",\n    \"当日購入者である\",\n    \"特別上映である\",\n    \"舞台挨拶付きの上映である\"\n  ],\n  \"actions\": [\n    {\n      \"name\": \"最終料金\",\n      \"type\": \"value\",\n      \"valueType\": \"int\"\n    }\n  ]\n}",
+  "decision_items": "{\n  \"conditions\": [\n    \"上映日が月曜日から木曜日であり、上映開始時刻が18時以前である\",\n    \"学生証を提示している\",\n    \"上映開始1時間前までの時点で空席率が80%以上であり、当日購入者である\",\n    \"特別上映または、舞台挨拶付きの上映である\"\n  ],\n  \"actions\": [\n    {\n      \"name\": \"最終料金\",\n      \"type\": \"value\",\n      \"valueType\": \"int\"\n    }\n  ]\n}",
   "framework": {
+    "method": "common_dt_framework",
+    "version": "1.0",
+    "strategy": "full_combination",
     "conditions": [
-      "上映日が月曜日から木曜日である",
-      "上映開始時刻が18時以前である",
-      "学生証を提示している",
-      "上映開始1時間前までの時点で空席率が80%以上である",
-      "当日購入者である",
-      "特別上映である",
-      "舞台挨拶付きの上映である"
+      {
+        "id": "C1",
+        "text": "上映日が月曜日から木曜日であり、上映開始時刻が18時以前である"
+      },
+      {
+        "id": "C2",
+        "text": "学生証を提示している"
+      },
+      {
+        "id": "C3",
+        "text": "上映開始1時間前までの時点で空席率が80%以上であり、当日購入者である"
+      },
+      {
+        "id": "C4",
+        "text": "特別上映または、舞台挨拶付きの上映である"
+      }
     ],
     "actions": [
       {
@@ -49,17 +61,165 @@
         "valueType": "int"
       }
     ],
-    "condition_count": 7,
-    "total_combinations": 128,
-    "remaining_rules": 128
+    "rule_count": 16,
+    "total_combinations": 16,
+    "excluded_count": 0,
+    "rules": [
+      {
+        "rule_id": "R1",
+        "conditions": {
+          "C1": "Y",
+          "C2": "Y",
+          "C3": "Y",
+          "C4": "Y"
+        }
+      },
+      {
+        "rule_id": "R2",
+        "conditions": {
+          "C1": "Y",
+          "C2": "Y",
+          "C3": "Y",
+          "C4": "N"
+        }
+      },
+      {
+        "rule_id": "R3",
+        "conditions": {
+          "C1": "Y",
+          "C2": "Y",
+          "C3": "N",
+          "C4": "Y"
+        }
+      },
+      {
+        "rule_id": "R4",
+        "conditions": {
+          "C1": "Y",
+          "C2": "Y",
+          "C3": "N",
+          "C4": "N"
+        }
+      },
+      {
+        "rule_id": "R5",
+        "conditions": {
+          "C1": "Y",
+          "C2": "N",
+          "C3": "Y",
+          "C4": "Y"
+        }
+      },
+      {
+        "rule_id": "R6",
+        "conditions": {
+          "C1": "Y",
+          "C2": "N",
+          "C3": "Y",
+          "C4": "N"
+        }
+      },
+      {
+        "rule_id": "R7",
+        "conditions": {
+          "C1": "Y",
+          "C2": "N",
+          "C3": "N",
+          "C4": "Y"
+        }
+      },
+      {
+        "rule_id": "R8",
+        "conditions": {
+          "C1": "Y",
+          "C2": "N",
+          "C3": "N",
+          "C4": "N"
+        }
+      },
+      {
+        "rule_id": "R9",
+        "conditions": {
+          "C1": "N",
+          "C2": "Y",
+          "C3": "Y",
+          "C4": "Y"
+        }
+      },
+      {
+        "rule_id": "R10",
+        "conditions": {
+          "C1": "N",
+          "C2": "Y",
+          "C3": "Y",
+          "C4": "N"
+        }
+      },
+      {
+        "rule_id": "R11",
+        "conditions": {
+          "C1": "N",
+          "C2": "Y",
+          "C3": "N",
+          "C4": "Y"
+        }
+      },
+      {
+        "rule_id": "R12",
+        "conditions": {
+          "C1": "N",
+          "C2": "Y",
+          "C3": "N",
+          "C4": "N"
+        }
+      },
+      {
+        "rule_id": "R13",
+        "conditions": {
+          "C1": "N",
+          "C2": "N",
+          "C3": "Y",
+          "C4": "Y"
+        }
+      },
+      {
+        "rule_id": "R14",
+        "conditions": {
+          "C1": "N",
+          "C2": "N",
+          "C3": "Y",
+          "C4": "N"
+        }
+      },
+      {
+        "rule_id": "R15",
+        "conditions": {
+          "C1": "N",
+          "C2": "N",
+          "C3": "N",
+          "C4": "Y"
+        }
+      },
+      {
+        "rule_id": "R16",
+        "conditions": {
+          "C1": "N",
+          "C2": "N",
+          "C3": "N",
+          "C4": "N"
+        }
+      }
+    ],
+    "exclusions": [],
+    "excluded_rules": []
   },
-  "framework_error": "条件数が 7 個あり、自動生成の上限 (6 個) を超えています (128 通り)。共通DTの生成は行いません (上限は「モデル設定...」の生成設定で変更できます。「共通DT枠組み...」で成立しない組合せを除外して上限以下にすることもできます)。",
+  "framework_error": "",
   "max_conditions": 6,
-  "status": "unusable",
-  "approved_at": "",
+  "status": "approved",
+  "approved_at": "2026-11-26T13:20:27",
   "note": "",
-  "edited": false,
-  "parent_id": "",
+  "edited": true,
+  "parent_id": "20261120_144946_573a10",
   "exclusions": [],
   "exclusion_warnings": [],
   "tool_version": {
