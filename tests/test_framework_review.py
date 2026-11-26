@@ -147,6 +147,26 @@ class TestTwoStageRun(Base):
         found = framework_store.find_approved(records[0].source_name, "テーマパークの料金仕様A")
         self.assertEqual(found[0].framework_id, records[0].framework_id)  # 新しい順
 
+    def test_use_saved_after_requirements_changed(self):
+        self.run_batch(MODE_FRAMEWORK_ONLY, sources=self.sources[:1])
+        record = framework_store.list_records()[0]
+        framework_store.set_status(record, framework_store.STATUS_APPROVED)
+
+        changed = [SpecSource(name=self.sources[0].name, label=self.sources[0].label, path=Path("book.xlsx"),
+                              requirements="テーマパークの料金仕様A (書き換え後)", meta=dict(SPEC_META))]
+        worker, client, finished, failed = self.run_batch(MODE_USE_SAVED, sources=changed)
+        self.assertEqual(failed, [])
+        self.assertEqual(len(finished), 1)
+        exp = finished[0]
+        self.assertEqual(exp.framework_source["framework_id"], record.framework_id)
+        self.assertTrue(exp.framework_source["requirements_changed"])
+        self.assertEqual(exp.framework, record.framework)  # 条件組合せは承認済みのまま
+        self.assertTrue(all("(書き換え後)" in c[1] for c in client.calls))  # 生成には現在の本文
+
+        # 本文が同じなら requirements_changed は False
+        worker, client, finished, failed = self.run_batch(MODE_USE_SAVED, sources=self.sources[:1])
+        self.assertFalse(finished[0].framework_source["requirements_changed"])
+
     def test_changed_requirements_still_match_by_spec_name(self):
         self.run_batch(MODE_FRAMEWORK_ONLY)
         record = framework_store.list_records()[0]
