@@ -211,7 +211,7 @@ class FrameworkDialog(QDialog):
         approved_count: dict[tuple[str, str], int] = {}
         for r in self._records:
             if r.status == STATUS_APPROVED:
-                key = (r.source_name, r.requirements_sha256)
+                key = r.source_name
                 approved_count[key] = approved_count.get(key, 0) + 1
 
         self.tree.blockSignals(True)  # 作り直しの途中で選択変更の処理を走らせない
@@ -224,8 +224,8 @@ class FrameworkDialog(QDialog):
                 notes.append("修正版")
             current = self._current_specs.get(record.source_name)
             if current and current != record.requirements_sha256:
-                notes.append("⚠ 現在の仕様と本文が異なる")
-            if record.status == STATUS_APPROVED and approved_count.get((record.source_name, record.requirements_sha256), 0) > 1:
+                notes.append("⚠ 作成後に仕様の本文が変更 (仕様名が同じなので使用)")
+            if record.status == STATUS_APPROVED and approved_count.get(record.source_name, 0) > 1:
                 notes.append("承認済みが複数 (最新を使用)")
             if record.note:
                 notes.append(f"メモ: {record.note}")
@@ -331,7 +331,8 @@ class FrameworkDialog(QDialog):
         if current and current != record.requirements_sha256:
             warnings.append(
                 "この枠組みを作成した後に、data/ の仕様の本文が変更されています。"
-                "この枠組みは現在の仕様の生成には使われません (作り直してください)。"
+                "仕様名 (番号・テーマ・区分・解釈揺れ) が同じなので、承認済みならこの枠組みを生成に使います "
+                "(生成モデルには現在の本文を渡します)。条件が変わる書き換えなら、枠組みを作り直してください。"
             )
         self.warning_label.setText("\n".join(warnings))
         self.review_view.set_text(framework_store.review_markdown(record))

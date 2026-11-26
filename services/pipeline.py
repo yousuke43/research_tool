@@ -216,6 +216,10 @@ def execute(
         if prompt:
             experiment.prompts[extraction_service.PROMPT_NAME] = prompt
         experiment.framework_source = saved_framework.source_summary()
+        # 枠組みは作成時の本文から作ったもの。生成には現在の本文 (experiment.requirements) を渡す
+        experiment.framework_source["requirements_changed"] = (
+            saved_framework.requirements_sha256 != framework_store.requirements_hash(experiment.requirements)
+        )
         experiment.framework_status = "ok"
         experiment.framework = saved_framework.framework
         experiment.generation_settings["framework_max_conditions"] = saved_framework.max_conditions

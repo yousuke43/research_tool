@@ -150,6 +150,11 @@ class BatchWorker(QObject):
                     self.file_failed.emit(source.label, message)
                     return
                 saved = candidates[0]
+                if framework_store.requirements_changed(saved, requirements):
+                    self.progress.emit(
+                        f"[{index}/{total}] {source.label}: 枠組みを作った後に仕様の本文が変更されています。"
+                        f"仕様名が同じなので {saved.framework_id} を使い、生成には現在の本文を渡します"
+                    )
                 if len(candidates) > 1:
                     self.progress.emit(
                         f"[{index}/{total}] {source.label}: 承認済みの枠組みが {len(candidates)} 件あるため、"

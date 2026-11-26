@@ -451,14 +451,21 @@ def delete(record: FrameworkRecord) -> None:
             pass
 
 
-def find_approved(source_name: str, requirements: str, records: list[FrameworkRecord] | None = None) -> list[FrameworkRecord]:
-    """仕様名と要求仕様本文が一致する承認済み枠組み (新しい順). 生成には先頭を使う."""
-    sha = requirements_hash(requirements)
+def find_approved(source_name: str, requirements: str = "", records: list[FrameworkRecord] | None = None) -> list[FrameworkRecord]:
+    """仕様名 (番号・テーマ・区分・解釈揺れ) が一致する承認済み枠組み (新しい順). 生成には先頭を使う.
+
+    枠組みを作った後に仕様の本文を書き換えても、仕様名が同じならその枠組みを使う
+    (本文が変わったかは requirements_changed() で確認できる。requirements は互換のため受け取るだけ)。
+    """
     records = list_records() if records is None else records
     return [
         r for r in records
         if r.source_name == (source_name or MANUAL_SOURCE_NAME)
-        and r.requirements_sha256 == sha
         and r.status == STATUS_APPROVED
         and r.usable
     ]
+
+
+def requirements_changed(record: FrameworkRecord, requirements: str) -> bool:
+    """枠組みを作ったときの本文と、現在の本文が違うか."""
+    return record.requirements_sha256 != requirements_hash(requirements)

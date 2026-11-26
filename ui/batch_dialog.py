@@ -229,6 +229,11 @@ class BatchDialog(QDialog):
                 drafts = [r for r in records if r.source_name == source.name and r.status != framework_store.STATUS_APPROVED]
                 if approved:
                     text += f"　✔ 承認済み枠組みあり ({approved[0].framework_id})"
+                    try:
+                        if framework_store.requirements_changed(approved[0], source.read_requirements()):
+                            text += " ⚠ 作成後に本文が変更"
+                    except OSError:
+                        pass
                 elif drafts:
                     text += "　… 未承認の枠組みあり"
                 else:

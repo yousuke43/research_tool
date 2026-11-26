@@ -147,12 +147,15 @@ class TestTwoStageRun(Base):
         found = framework_store.find_approved(records[0].source_name, "テーマパークの料金仕様A")
         self.assertEqual(found[0].framework_id, records[0].framework_id)  # 新しい順
 
-    def test_changed_requirements_do_not_match(self):
+    def test_changed_requirements_still_match_by_spec_name(self):
         self.run_batch(MODE_FRAMEWORK_ONLY)
         record = framework_store.list_records()[0]
         framework_store.set_status(record, framework_store.STATUS_APPROVED)
-        self.assertEqual(framework_store.find_approved(record.source_name, "書き換えた仕様"), [])
-        self.assertEqual(len(framework_store.find_approved(record.source_name, record.requirements)), 1)
+        found = framework_store.find_approved(record.source_name, "書き換えた仕様")
+        self.assertEqual([r.framework_id for r in found], [record.framework_id])
+        self.assertTrue(framework_store.requirements_changed(found[0], "書き換えた仕様"))
+        self.assertFalse(framework_store.requirements_changed(found[0], record.requirements))
+        self.assertEqual(framework_store.find_approved("別の仕様", record.requirements), [])
 
     def test_edited_version(self):
         self.run_batch(MODE_FRAMEWORK_ONLY, sources=self.sources[:1])
