@@ -5,9 +5,12 @@ LLM の呼び出しは必ずここを通す (各ベンダーの API は直接使
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 import requests
+
+from services import token_usage
 
 API_BASE = "https://openrouter.ai/api/v1"
 APP_TITLE = "Decision Table Experiment Tool"
@@ -133,11 +136,13 @@ class OpenRouterClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         response_format: dict | None = None,
+        purpose: str = "",
     ) -> ChatResult:
         """1回の chat completion を実行し、本文テキストとトークン使用量を返す.
 
         max_tokens: None / 0 の場合は送らない (モデルの既定値に任せる)。
         推論トークンも max_tokens に含まれるモデルがあるので、小さくしすぎないこと。
+        purpose: トークン累計 (outputs/token_usage/) の用途欄に記録する名前 (services/token_usage.PURPOSE_*)。
         """
         if not self.api_key:
             raise OpenRouterError(
@@ -155,6 +160,7 @@ class OpenRouterClient:
         if response_format:
             payload["response_format"] = response_format
 
+        started = time.perf_counter()
         try:
             response = requests.post(
                 f"{API_BASE}/chat/completions",
@@ -178,16 +184,33 @@ class OpenRouterClient:
             code = error.get("code") if isinstance(error.get("code"), int) else None
             raise make_api_error(code, str(error.get("message", "不明なエラー")))
 
+        usage = body.get("usage") or {}
+        details = usage.get("completion_tokens_details") or {}
         choices = body.get("choices") or []
-        if not choices:
-            raise OpenRouterError("応答に choices が含まれていません")
-
-        finish_reason = str(choices[0].get("finish_reason") or "")
-        content = (choices[0].get("message") or {}).get("content") or ""
+        finish_reason = str(choices[0].get("finish_reason") or "") if choices else ""
+        content = ((choices[0].get("message") or {}).get("content") or "") if choices else ""
         if isinstance(content, list):  # マルチパート応答への保険
             content = "".join(
                 part.get("text", "") for part in content if isinstance(part, dict)
             )
+        reasoning_tokens = int(details.get("reasoning_tokens") or 0) if isinstance(details, dict) else 0
+        # 応答が空でもトークンは消費されているので、エラーにする前に累計へ記録する
+        token_usage.record_call(
+            purpose=purpose,
+            model=model,
+            prompt_tokens=int(usage.get("prompt_tokens") or 0),
+            completion_tokens=int(usage.get("completion_tokens") or 0),
+            reasoning_tokens=reasoning_tokens,
+            total_tokens=int(usage.get("total_tokens") or 0),
+            cost=usage.get("cost") if isinstance(usage.get("cost"), (int, float)) else None,
+            elapsed_sec=time.perf_counter() - started,
+            finish_reason=finish_reason,
+            status="ok" if choices and str(content).strip() else "empty_response",
+        )
+
+        if not choices:
+            raise OpenRouterError("応答に choices が含まれていません")
+
         if not content.strip():
             if finish_reason == "length":
                 raise OpenRouterError(
@@ -196,13 +219,11 @@ class OpenRouterClient:
                 )
             raise OpenRouterError("応答が空でした")
 
-        usage = body.get("usage") or {}
-        details = usage.get("completion_tokens_details") or {}
         return ChatResult(
             content=content.strip(),
             prompt_tokens=int(usage.get("prompt_tokens") or 0),
             completion_tokens=int(usage.get("completion_tokens") or 0),
             total_tokens=int(usage.get("total_tokens") or 0),
-            reasoning_tokens=int(details.get("reasoning_tokens") or 0) if isinstance(details, dict) else 0,
+            reasoning_tokens=reasoning_tokens,
             finish_reason=finish_reason,
         )

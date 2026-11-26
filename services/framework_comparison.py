@@ -12,8 +12,10 @@
     excluded              除外 (LLM未使用) : 除外パターンで除外し、LLM に渡していない組合せ
                           (LLM が「適用不可」と判断した組合せとは区別する)
 
-失敗・形式不正のモデルが一部だけの場合は、残りのモデルで比較したうえで
-failed_models に記録する。不一致が解釈差異か計算ミスかはここでは判断しない。
+値を1つも取り出せなかったモデル (API エラー・JSON として読めない等) は比較から外し failed_models に記録する。
+形式不正でも値を取り出せたモデル (型が合わない値・一部のルールの欠落など) は、返ってきた値で比較に含め
+partial_models に記録する。型が合わない値は type_mismatch に印を付ける。
+不一致が解釈差異か計算ミスかはここでは判断しない。
 """
 
 from __future__ import annotations
@@ -23,7 +25,13 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
-from services.dt_framework import NOT_APPLICABLE, CommonFramework, is_not_applicable
+from services.dt_framework import (
+    NOT_APPLICABLE,
+    CommonFramework,
+    is_not_applicable,
+    normalize_action_value,
+    validate_fill_response,
+)
 
 CATEGORY_EXACT = "exact"
 CATEGORY_SEMANTIC = "semantic"
@@ -61,12 +69,18 @@ class ModelFill:
     raw_values: dict[str, dict[str, Any]] = field(default_factory=dict)  # 返ってきたまま
     error: str = ""
 
+    @property
+    def comparable(self) -> bool:
+        """比較に使える値が1つでもあるか (形式不正でも値を取り出せていれば比較する)."""
+        return any(self.values.values())
+
 
 @dataclass(frozen=True)
 class ActionComparison:
     action: str
     category: str
-    values: dict[str, Any]  # model key -> 正規化済みの値
+    values: dict[str, Any]  # model key -> 正規化済みの値 (値が無いモデルは含まない)
+    type_mismatch: tuple[str, ...] = ()  # 型が合わない値を返したモデル
 
 
 @dataclass(frozen=True)
@@ -87,6 +101,8 @@ class FrameworkComparison:
     model_keys: list[str]
     failed_models: list[str]
     rules: list[RuleComparison]
+    # 形式不正だが、取り出せた値で比較に含めたモデル
+    partial_models: list[str] = field(default_factory=list)
     # 除外した組合せ ({"rule_id", "conditions": (Y/N...), "reason"})。比較対象ではない
     excluded: list[dict] = field(default_factory=list)
 
@@ -101,12 +117,17 @@ class FrameworkComparison:
         return {
             "model_keys": self.model_keys,
             "failed_models": self.failed_models,
+            "partial_models": self.partial_models,
             "counts": self.counts(),
             "rules": [
                 {
                     "rule_id": r.rule_id,
                     "category": r.category,
-                    "actions": {a.action: {"category": a.category, "values": a.values} for a in r.actions},
+                    "actions": {
+                        a.action: {"category": a.category, "values": a.values, "type_mismatch": list(a.type_mismatch)}
+                        for a in r.actions
+                    },
+                    "failed_models": r.failed_models,
                 }
                 for r in self.rules
             ],
@@ -152,40 +173,91 @@ def classify_values(raw_values: list[Any]) -> str:
 
 def compare_fills(framework: CommonFramework, fills: list[ModelFill]) -> FrameworkComparison:
     model_keys = [f.key for f in fills]
-    valid = [f for f in fills if f.ok]
-    failed = [f.key for f in fills if not f.ok]
+    usable = [f for f in fills if f.ok or f.comparable]
+    failed = [f.key for f in fills if f not in usable]
+    partial = [f.key for f in usable if not f.ok]
     rules: list[RuleComparison] = []
     for rule in framework.rules:
         action_results = []
+        missing: set[str] = set()
         for action in framework.actions:
-            raw = [f.raw_values.get(rule.rule_id, {}).get(action.name) for f in valid]
-            category = classify_values(raw)
-            values = {f.key: f.values.get(rule.rule_id, {}).get(action.name) for f in valid}
-            action_results.append(ActionComparison(action.name, category, values))
+            present = [f for f in usable if action.name in f.values.get(rule.rule_id, {})]
+            missing.update(f.key for f in usable if f not in present)
+            raw = [
+                f.raw_values.get(rule.rule_id, {}).get(action.name, f.values[rule.rule_id][action.name])
+                for f in present
+            ]
+            values = {f.key: f.values[rule.rule_id][action.name] for f in present}
+            mismatch = tuple(
+                f.key for f, value in zip(present, raw) if normalize_action_value(action, value)[1] is not None
+            )
+            action_results.append(ActionComparison(action.name, classify_values(raw), values, mismatch))
         category = max((a.category for a in action_results), key=_SEVERITY.__getitem__, default=CATEGORY_FAILED)
-        rules.append(RuleComparison(rule.rule_id, rule.values, category, action_results, failed))
+        rule_failed = failed + [k for k in model_keys if k in missing]
+        rules.append(RuleComparison(rule.rule_id, rule.values, category, action_results, rule_failed))
     excluded = [
         {"rule_id": r.rule_id, "conditions": r.values, "reason": framework.exclusion_reason(r)}
         for r in framework.excluded_rules
     ]
-    return FrameworkComparison(model_keys=model_keys, failed_models=failed, rules=rules, excluded=excluded)
+    return FrameworkComparison(
+        model_keys=model_keys, failed_models=failed, rules=rules, partial_models=partial, excluded=excluded
+    )
 
 
-def fills_from_records(results: list[dict]) -> list[ModelFill]:
-    """results.json の results (新方式) から ModelFill を作る."""
+def _revalidate(framework: CommonFramework, record: dict) -> tuple[dict, dict] | None:
+    """形式不正のモデルの生の応答を検証し直し、取り出せる値を返す (以前の版で保存した結果用)."""
+    chunks = [(b.get("raw_response", ""), b.get("rule_ids") or None) for b in record.get("batches") or []]
+    if not chunks and record.get("raw_response"):
+        chunks = [(record["raw_response"], None)]
+    values: dict = {}
+    raw: dict = {}
+    for text, rule_ids in chunks:
+        if not text:
+            continue
+        report = validate_fill_response(framework, text, rule_ids)
+        values.update(report.values)
+        raw.update(report.raw_values)
+    return (values, raw) if values else None
+
+
+def fills_from_records(results: list[dict], framework: CommonFramework | None = None) -> list[ModelFill]:
+    """results.json の results (新方式) から ModelFill を作る.
+
+    framework を渡すと、形式不正のモデルは生の応答から値を取り出し直す
+    (型が合わない値を比較に使わなかった以前の版の結果でも比較できるようにする)。
+    """
     fills = []
     for i, r in enumerate(results):
+        ok = r.get("status") == "ok"
+        values = r.get("validated_results") or {}
+        raw_values = r.get("raw_results") or {}
+        if not ok and framework is not None:
+            redone = _revalidate(framework, r)
+            if redone is not None:
+                values, raw_values = redone
         fills.append(
             ModelFill(
                 key=r.get("model_id") or str(i),
                 title=r.get("model_name") or r.get("model_id", ""),
-                ok=r.get("status") == "ok",
-                values=r.get("validated_results") or {},
-                raw_values=r.get("raw_results") or {},
+                ok=ok,
+                values=values,
+                raw_values=raw_values,
                 error=r.get("error", ""),
             )
         )
     return fills
+
+
+def comparison_for_record(record: dict) -> dict:
+    """results.json の内容から比較結果 (to_dict の形) を作り直す. 作れなければ保存済みの値を返す."""
+    framework_data = record.get("framework")
+    if record.get("framework_status") != "ok" or not framework_data or not record.get("results"):
+        return record.get("framework_comparison") or {}
+    try:
+        framework = CommonFramework.from_dict(framework_data)
+    except (KeyError, TypeError, ValueError):
+        return record.get("framework_comparison") or {}
+    return compare_fills(framework, fills_from_records(record["results"], framework)).to_dict()
 
 
 __all__ = [
@@ -196,5 +268,6 @@ __all__ = [
     "RuleComparison",
     "classify_values",
     "compare_fills",
+    "comparison_for_record",
     "fills_from_records",
 ]

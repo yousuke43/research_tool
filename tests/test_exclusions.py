@@ -261,36 +261,88 @@ class TestEditorUi(Base):
         dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
         editor: ExclusionEditor = dialog.exclusion_editor
         self.assertIn("全 8 通り → 除外 0 通り", editor.count_label.text())
-        editor.quick_edit.setText("N Y -")
-        editor.quick_reason.setText("5回以上なら必ず3回以上")
-        editor.quick_button.click()
-        editor.quick_edit.setText("- N Y")
-        editor.quick_button.click()  # 理由なし
-        self.assertIn("除外 4 通り", editor.count_label.text())
-        self.assertIn("残り 4 ルール", editor.count_label.text())
-        self.assertEqual(editor.pattern_table.item(0, 5).text(), "2")  # 一致数
+
+        # 文字で入力 → ボタンに反映。理由なしでは追加できない (フォーム内のメッセージで知らせる)
+        editor.pattern_text.setText("N Y -")
+        editor.pattern_text.textEdited.emit("N Y -")
+        self.assertEqual(editor.form_values(), ("N", "Y", "-"))
+        self.assertIn("一致する組合せ: 2 通り", editor.form_match_label.text())
+        self.assertFalse(editor.add_from_form())
+        self.assertIn("理由", editor.form_message.text())
+        self.assertEqual(editor.pattern_table.rowCount(), 0)
+
+        editor.reason_edit.setText("5回以上なら必ず3回以上")
+        self.assertTrue(editor.add_from_form())
+        self.assertEqual(editor.pattern_table.rowCount(), 1)
+        self.assertEqual(editor.pattern_table.item(0, 3).text(), "2")  # 一致数
+        self.assertEqual(editor.form_values(), ("-", "-", "-"))  # 追加後はフォームをクリア
+
+        # すべて - は追加できない / 同じパターンは追加できない
+        self.assertFalse(editor.add_from_form())
+        editor.set_form_values(("N", "Y", "-"))
+        editor.reason_edit.setText("dup")
+        self.assertFalse(editor.add_from_form())
+        self.assertIn("#1", editor.form_message.text())
+
+        # フォームに入力したまま保存 → 追加してから保存するか確認される
+        editor.set_form_values(("-", "N", "Y"))
+        editor.reason_edit.setText("10回以上なら必ず5回以上")
+        editor._on_form_touched()
+        with mock.patch.object(QMessageBox, "question", return_value=QMessageBox.Cancel),                 mock.patch.object(QMessageBox, "warning"):
+            self.assertIsNone(editor.save())
+            dialog.approve_button.click()  # 未保存の除外があるので承認しない
+        self.assertEqual(framework_store.list_records()[0].status, framework_store.STATUS_DRAFT)
+        self.assertIn("除外 2 通り", editor.count_label.text())
+        with mock.patch.object(QMessageBox, "question", return_value=QMessageBox.Yes):
+            saved = editor.save()
+        self.assertIsNotNone(saved)
+        self.assertEqual(framework_store.load(saved.path).rule_count, 4)
+        self.assertEqual(
+            [(p.text, p.reason) for p in framework_store.load(saved.path).exclusion_patterns()],
+            [("N Y -", "5回以上なら必ず3回以上"), ("- N Y", "10回以上なら必ず5回以上")],
+        )
+        self.assertIn("3 / 4 (全8・除外4)", dialog.tree.currentItem().text(2))
+        self.assertFalse(editor.has_unsaved_changes())
+
         editor.filter_combo.setCurrentIndex(editor.filter_combo.findData(FILTER_EXCLUDED))
         self.assertEqual(editor.preview_model.rowCount(), 4)
         self.assertEqual(editor.preview_model.rule_at(0).rule_id, "R3")
 
-        with mock.patch.object(QMessageBox, "warning") as warning:
-            self.assertIsNone(editor.save())  # 理由が空なので保存しない
-            self.assertIn("#2", warning.call_args.args[2])
-            dialog.approve_button.click()  # 未保存の除外があるので承認しない
-        self.assertEqual(framework_store.list_records()[0].status, framework_store.STATUS_DRAFT)
-
-        editor.pattern_table.item(1, 4).setText("10回以上なら必ず5回以上")
-        saved = editor.save()
-        self.assertIsNotNone(saved)
-        self.assertEqual(framework_store.load(saved.path).rule_count, 4)
-        self.assertIn("3 / 4 (全8・除外4)", dialog.tree.currentItem().text(2))
+        # 一覧の行を選ぶとフォームに読み込み、更新できる
+        editor.pattern_table.selectRow(1)
+        self.assertEqual(editor.form_values(), ("-", "N", "Y"))
+        editor.reason_edit.setText("包含関係")
+        self.assertTrue(editor.update_from_form())
+        self.assertEqual(editor.current_patterns()[1].reason, "包含関係")
+        self.assertTrue(editor.has_unsaved_changes())
+        editor.revert_button.click()
         self.assertFalse(editor.has_unsaved_changes())
+
         dialog.approve_button.click()
         self.assertEqual(framework_store.list_records()[0].status, framework_store.STATUS_APPROVED)
 
-        # 全て - の行は無効として扱う
-        editor.add_button.click()
-        self.assertIn("無効なパターン 1 件", editor.count_label.text())
+    def test_missing_reason_from_old_data_is_reported_by_row(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        from ui.exclusion_editor import ExclusionEditor
+
+        self.run_batch(MODE_FRAMEWORK_ONLY)
+        record = framework_store.list_records()[0]
+        conditions = record.decision_items_obj().conditions
+        record.exclusions = [
+            d.ExclusionPattern(("N", "Y", "-"), "ok").to_dict(conditions),
+            d.ExclusionPattern(("-", "N", "Y"), "").to_dict(conditions),
+        ]
+        editor = ExclusionEditor()
+        editor.set_record(record, [record])
+        self.assertIn("未入力", editor.pattern_table.item(1, 2).text())
+        with mock.patch.object(QMessageBox, "warning") as warning:
+            self.assertIsNone(editor.save())
+        self.assertIn("#2", warning.call_args.args[2])
+        self.assertEqual(editor.form_values(), ("-", "N", "Y"))  # 該当行をフォームに読み込む
+        editor.reason_edit.setText("10回以上なら必ず5回以上")
+        self.assertTrue(editor.update_from_form())
+        self.assertIsNotNone(editor.save())
 
     def test_large_preview_is_fast(self):
         from ui.exclusion_editor import ExclusionEditor
@@ -304,7 +356,9 @@ class TestEditorUi(Base):
         started = time.perf_counter()
         editor.set_record(record, [record])
         for i in range(6):
-            editor._add_pattern(tuple("Y" if j == i else ("N" if j == i + 1 else "-") for j in range(12)), "r")
+            editor.set_form_values(tuple("Y" if j == i else ("N" if j == i + 1 else "-") for j in range(12)))
+            editor.reason_edit.setText("r")
+            self.assertTrue(editor.add_from_form())
         elapsed = time.perf_counter() - started
         self.assertEqual(editor.preview_model.rowCount(), 4096)
         self.assertLess(elapsed, 3.0)

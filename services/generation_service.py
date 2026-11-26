@@ -7,6 +7,7 @@ Decision Items の抽出は実験につき1回だけ行い、その結果を全�
 
 from __future__ import annotations
 
+from services import token_usage
 from services.openrouter_client import ChatResult, OpenRouterClient
 from utils.file_manager import load_prompt, render_prompt
 
@@ -24,4 +25,4 @@ def generate_decision_table(
     prompt = render_prompt(
         template, requirements=requirements, decision_items=decision_items
     )
-    return client.chat(model_id, prompt, max_tokens=max_tokens or None)
+    return client.chat(model_id, prompt, max_tokens=max_tokens or None, purpose=token_usage.PURPOSE_CONVENTIONAL)

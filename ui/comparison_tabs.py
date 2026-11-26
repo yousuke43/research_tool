@@ -58,7 +58,7 @@ def add_framework_tabs(tabs: QTabWidget, record: dict) -> None:
 
     framework = CommonFramework.from_dict(record["framework"])
     settings = record.get("generation_settings") or {}
-    tabs.insertTab(0, FrameworkComparisonView(framework, fills_from_records(record.get("results", []))), "共通DT比較")
+    tabs.insertTab(0, FrameworkComparisonView(framework, fills_from_records(record.get("results", []), framework)), "共通DT比較")
     caption = (
         f"方式: {framework.method} v{framework.version} ({framework.strategy})  /  "
         f"条件 {len(framework.conditions)} 個・{len(framework.rules)} ルール"

@@ -413,6 +413,22 @@ def list_records() -> list[FrameworkRecord]:
     return records
 
 
+def spec_sort_key(record: FrameworkRecord) -> tuple:
+    """仕様の番号順に並べるためのキー (番号 → 仕様名。番号が無い仕様は最後)."""
+    number = str((record.source_meta or {}).get("番号", "")).strip()
+    if not number:
+        digits = ""
+        for ch in record.source_name or "":
+            if not ch.isdigit():
+                break
+            digits += ch
+        number = digits
+    try:
+        return (0, float(number), record.source_name)
+    except ValueError:
+        return (1, 0.0, record.source_name or record.source_label)
+
+
 def set_status(record: FrameworkRecord, status: str) -> None:
     if status == STATUS_APPROVED and not record.usable:
         raise ValueError("この枠組みは使用できない状態のため承認できません。")

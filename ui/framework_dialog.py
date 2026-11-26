@@ -58,7 +58,8 @@ class FrameworkDialog(QDialog):
     def __init__(self, settings: dict | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("共通DT枠組みの確認・承認")
-        self.resize(1200, 780)
+        self.resize(1440, 900)
+        self.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
         self.settings = dict(settings or {})
         self._records: list[FrameworkRecord] = []
         self._current_specs: dict[str, str] = {}  # 仕様名 -> 現在の要求仕様の SHA-256
@@ -87,12 +88,17 @@ class FrameworkDialog(QDialog):
         self.refresh_button.clicked.connect(self.reload)
         self.open_folder_button = QPushButton("保存フォルダを開く")
         self.open_folder_button.clicked.connect(self._open_folder)
+        self.hide_list_button = QPushButton("一覧を隠す")
+        self.hide_list_button.setCheckable(True)
+        self.hide_list_button.setToolTip("左の一覧を隠して、右側 (除外の編集など) を広く使います。")
+        self.hide_list_button.toggled.connect(self._toggle_list)
 
         top = QHBoxLayout()
         top.addWidget(self.filter_edit, 1)
         top.addWidget(self.status_filter)
         top.addWidget(self.refresh_button)
         top.addWidget(self.open_folder_button)
+        top.addWidget(self.hide_list_button)
 
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(COLUMNS)
@@ -162,7 +168,8 @@ class FrameworkDialog(QDialog):
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(self.tree)
         splitter.addWidget(right)
-        splitter.setSizes([520, 680])
+        splitter.setSizes([420, 1020])
+        self.main_splitter = splitter
 
         self.close_button = QPushButton("閉じる")
         self.close_button.clicked.connect(self.accept)
@@ -176,6 +183,10 @@ class FrameworkDialog(QDialog):
         layout.addWidget(splitter, 1)
         layout.addLayout(bottom)
         self._set_detail_enabled(False)
+
+    def _toggle_list(self, hidden: bool) -> None:
+        self.tree.setVisible(not hidden)
+        self.hide_list_button.setText("一覧を表示" if hidden else "一覧を隠す")
 
     # ------------------------------------------------------------- 一覧
     def _load_current_specs(self) -> None:
@@ -206,7 +217,8 @@ class FrameworkDialog(QDialog):
         self.tree.blockSignals(True)  # 作り直しの途中で選択変更の処理を走らせない
         self.tree.clear()
         restore = None
-        for record in self._records:
+        # 仕様の番号順 (同じ仕様の中は新しい版が上。list_records() の新しい順を保つ)
+        for record in sorted(self._records, key=framework_store.spec_sort_key):
             notes = []
             if record.edited:
                 notes.append("修正版")

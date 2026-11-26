@@ -269,7 +269,7 @@ def execute(
 
     if options.method == METHOD_COMMON_FRAMEWORK and experiment.framework:
         fw = dt_framework.CommonFramework.from_dict(experiment.framework)
-        fills = fills_from_records([r.to_dict() for r in experiment.results])
+        fills = fills_from_records([r.to_dict() for r in experiment.results], fw)
         experiment.framework_comparison = compare_fills(fw, fills).to_dict()
 
     experiment.finished_at = datetime.now()

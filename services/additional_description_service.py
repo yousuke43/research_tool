@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 from models.decision_table import DecisionTable
+from services import token_usage
 from services.openrouter_client import ChatResult, OpenRouterClient
 from services.table_comparison import ComparisonGroup, ComparisonResult
 from utils.file_manager import load_prompt, render_prompt, safe_filename
@@ -138,7 +139,7 @@ def request_additional_description(
 ) -> ChatResult:
     template = load_prompt(PROMPT_NAME)
     prompt = render_prompt(template, document=document, difference=difference)
-    return client.chat(model_id, prompt)
+    return client.chat(model_id, prompt, purpose=token_usage.PURPOSE_ADDITIONAL)
 
 
 # ------------------------------------------------------------------ 保存

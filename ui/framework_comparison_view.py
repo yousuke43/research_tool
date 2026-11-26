@@ -99,8 +99,12 @@ class FrameworkComparisonView(QWidget):
         if fw.excluded_rules:
             text += f" (全 {fw.total_combinations} 通りから {len(fw.excluded_rules)} 通りを除外)"
         text += "　" + "　".join(parts)
+        if result.partial_models:
+            text += "\n形式不正 (型が合わない値など) だが、返ってきた値で比較に含めたモデル: " + "、".join(
+                self._titles.get(k, k) for k in result.partial_models
+            ) + "　(⚠ = 項目の型と合わない値)"
         if result.failed_models:
-            text += "\n生成失敗・形式不正のため比較対象外: " + "、".join(self._titles.get(k, k) for k in result.failed_models)
+            text += "\n値を取り出せないため比較対象外: " + "、".join(self._titles.get(k, k) for k in result.failed_models)
         self.summary_label.setText(text)
         differences = counts[CATEGORY_VALUE_MISMATCH] + counts[CATEGORY_APPLICABILITY_MISMATCH]
         self.summary_label.setStyleSheet("color: #b00020;" if differences or result.failed_models else "color: #1a7a1a;")
@@ -111,7 +115,7 @@ class FrameworkComparisonView(QWidget):
         if self.show_excluded_check.isChecked() and not self.diff_only_check.isChecked():
             rules += result.excluded
             rules.sort(key=lambda r: int(self._rule_id(r)[1:]) if self._rule_id(r)[1:].isdigit() else 0)
-        valid_keys = [f.key for f in self._fills if f.ok]
+        valid_keys = [k for k in result.model_keys if k not in result.failed_models]
         cond_headers = [f"C{i}" for i in range(1, len(fw.conditions) + 1)]
         action_headers = [
             (action.name, key) for action in fw.actions for key in valid_keys
@@ -136,9 +140,20 @@ class FrameworkComparisonView(QWidget):
             comparisons = {a.action: a for a in rule.actions}
             for col, (action_name, key) in enumerate(action_headers, start=1 + len(cond_headers)):
                 comparison = comparisons[action_name]
-                item = self._item(format_value(comparison.values.get(key)))
+                title = self._titles.get(key, key)
+                if key not in comparison.values:
+                    item = self._item("(なし)", tooltip=f"{title} / このルールの値がありません (形式不正)")
+                    item.setBackground(QBrush(_COLORS[CATEGORY_FAILED]))
+                    self.table.setItem(row, col, item)
+                    continue
+                text = format_value(comparison.values.get(key))
+                tooltip = f"{title} / {CATEGORY_LABELS[comparison.category]}"
+                if key in comparison.type_mismatch:
+                    text += " ⚠"
+                    tooltip += " / 項目の型と合わない値 (返ってきたまま比較しています)"
+                item = self._item(text)
                 item.setBackground(QBrush(_COLORS[comparison.category]))
-                item.setToolTip(f"{self._titles.get(key, key)} / {CATEGORY_LABELS[comparison.category]}")
+                item.setToolTip(tooltip)
                 self.table.setItem(row, col, item)
             verdict = self._item(CATEGORY_LABELS[rule.category])
             verdict.setBackground(QBrush(_COLORS[rule.category]))

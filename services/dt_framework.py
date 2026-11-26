@@ -657,7 +657,12 @@ def validate_fill_data(
             value, error, warning = normalize_action_value(action, actions[name])
             if error:
                 report.errors.append(f"{rule_id}「{name}」: {error}")
-                continue
+                returned = actions[name]
+                if returned is None or (isinstance(returned, str) and not returned.strip()):
+                    continue
+                # 型が合わない値 (int 型の項目に "0.9P" など) も、比較には返ってきたまま使う
+                # (モデルは「形式不正」のまま。比較画面・CSV では型不一致として印を付ける)
+                value = returned.strip() if isinstance(returned, str) else returned
             if warning:
                 report.warnings.append(f"{rule_id}「{name}」: {warning}")
             normalized[name] = value

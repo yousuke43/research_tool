@@ -269,3 +269,28 @@ class TestExportRows(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSpecOrder(unittest.TestCase):
+    def test_records_are_sorted_by_spec_number(self):
+        def rec(name, number, created):
+            r = framework_store.build_record(
+                source_name=name, source_label=name, source_path="", source_meta={"番号": number} if number else {},
+                requirements="r", extraction={"model": "m/x"},
+                decision_items='{"conditions": ["a"], "actions": [{"name": "x", "type": "action"}]}', max_conditions=6)
+            r.created_at = created
+            return r
+
+        records = [  # list_records() と同じ新しい順
+            rec("10_ホテル_あり", "10", "2026-11-20T10:05:00"),
+            rec("2_映画_なし", "2", "2026-11-20T10:04:00"),
+            rec("manual", "", "2026-11-20T10:03:00"),
+            rec("2_映画_あり", "2", "2026-11-20T10:02:00"),
+            rec("10_ホテル_あり", "10", "2026-11-20T10:01:00"),
+        ]
+        ordered = sorted(records, key=framework_store.spec_sort_key)
+        self.assertEqual([(r.source_name, r.created_at[-5:]) for r in ordered], [
+            ("2_映画_あり", "02:00"), ("2_映画_なし", "04:00"),
+            ("10_ホテル_あり", "05:00"), ("10_ホテル_あり", "01:00"),  # 同じ仕様は新しい版が上
+            ("manual", "03:00"),
+        ])

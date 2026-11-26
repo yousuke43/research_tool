@@ -21,7 +21,7 @@ from pathlib import Path
 
 from models.experiment import METHOD_COMMON_FRAMEWORK
 from services.dt_framework import format_value, is_not_applicable
-from services.framework_comparison import CATEGORY_EXCLUDED, CATEGORY_LABELS
+from services.framework_comparison import CATEGORY_EXCLUDED, CATEGORY_LABELS, comparison_for_record
 
 SUMMARY_FILE = "summary.csv"
 RULE_RESULTS_FILE = "rule_results.csv"
@@ -53,8 +53,9 @@ def _first_line(text: str) -> str:
 def summary_rows(record: dict, run_dir: str = "") -> list[dict]:
     base = _base_columns(record, run_dir)
     framework = record.get("framework") or {}
-    comparison = record.get("framework_comparison") or {}
+    comparison = comparison_for_record(record) if record.get("generation_method") == METHOD_COMMON_FRAMEWORK else {}
     counts = comparison.get("counts") or {}
+    partial = set(comparison.get("partial_models") or [])
     rows = []
     results = record.get("results") or []
     if not results:  # 生成していない (条件数超過など) 場合も1行残す
@@ -86,6 +87,7 @@ def summary_rows(record: dict, run_dir: str = "") -> list[dict]:
             ) if framework else "",
             "validation_errors": len(r.get("validation_errors") or []),
             "validation_warnings": len(r.get("validation_warnings") or []),
+            "compared": (r.get("status") == "ok" or r.get("model_id") in partial) if comparison else "",
             "not_applicable_rules": na if validated else "",
         }
         for key, label in CATEGORY_LABELS.items():
@@ -96,7 +98,7 @@ def summary_rows(record: dict, run_dir: str = "") -> list[dict]:
 
 def _framework_rule_rows(record: dict, base: dict) -> list[dict]:
     framework = record.get("framework") or {}
-    comparison = record.get("framework_comparison") or {}
+    comparison = comparison_for_record(record)
     cond_texts = [c["text"] if isinstance(c, dict) else str(c) for c in framework.get("conditions", [])]
     cond_ids = [f"C{i}" for i in range(1, len(cond_texts) + 1)]
     rule_cmp = {r["rule_id"]: r for r in comparison.get("rules", [])}
@@ -106,8 +108,12 @@ def _framework_rule_rows(record: dict, base: dict) -> list[dict]:
         values = [rule["conditions"].get(cid, "") for cid in cond_ids]
         cmp = rule_cmp.get(rid, {})
         for result in record.get("results") or []:
-            model_ok = result.get("status") == "ok"
-            validated = (result.get("validated_results") or {}).get(rid, {})
+            model_id = result.get("model_id", "")
+            validated = {
+                name: act.get("values", {}).get(model_id)
+                for name, act in (cmp.get("actions") or {}).items()
+                if model_id in act.get("values", {})
+            } or (result.get("validated_results") or {}).get(rid, {})
             raw = (result.get("raw_results") or {}).get(rid, {})
             for action in framework.get("actions", []):
                 name = action.get("name", "")
@@ -121,9 +127,10 @@ def _framework_rule_rows(record: dict, base: dict) -> list[dict]:
                     "model_id": result.get("model_id", ""),
                     "model_status": result.get("status", ""),
                     "action": name,
-                    "value": format_value(validated.get(name)) if model_ok else "",
+                    "value": format_value(validated.get(name)) if name in validated else "",
+                    "type_mismatch": model_id in (act_cmp.get("type_mismatch") or []),
                     "raw_value": "" if name not in raw else str(raw.get(name)),
-                    "not_applicable": is_not_applicable(validated.get(name)) if model_ok else "",
+                    "not_applicable": is_not_applicable(validated.get(name)) if name in validated else "",
                     "action_category": act_cmp.get("category", ""),
                     "action_category_label": CATEGORY_LABELS.get(act_cmp.get("category", ""), ""),
                     "rule_category": cmp.get("category", ""),

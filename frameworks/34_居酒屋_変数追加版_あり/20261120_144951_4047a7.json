@@ -1,0 +1,410 @@
+{
+  "framework_id": "20261120_144951_4047a7",
+  "created_at": "2026-11-20T14:49:51",
+  "source_name": "34_居酒屋_変数追加版_あり",
+  "source_label": "ビジネスルール記述まとめ.xlsx / Sheet2 / 34_居酒屋_変数追加版_あり",
+  "source_path": "C:\\Users\\yousu\\research\\tool\\tool\\data\\ビジネスルール記述まとめ.xlsx",
+  "source_meta": {
+    "excel_file": "ビジネスルール記述まとめ.xlsx",
+    "sheet": "Sheet2",
+    "row": 103,
+    "番号": "34",
+    "区分": "変数追加版",
+    "テーマ": "居酒屋",
+    "解釈揺れ": "あり",
+    "揺れの内容": "人数割引・学生割引・会計金額割引の併用可否と、割引率の合算・逐次適用"
+  },
+  "requirements": "会計の合計金額をP円とする。 ・4人以上での利用で10%割引になる。 ・ただし、個別に会計を行う場合は利用人数による割引は適用されない。 ・学生のみでの利用であれば3人以上で10%割引となる。 ・学生証を提示できなければ学生とみなさない。 ・会計金額が10000円をこえていれば5%割引となる。",
+  "requirements_sha256": "f9b66e8e7eb5954c887d1a7efbf9ce705e9979267369d2e2fc9bf60e2f3b2492",
+  "extraction": {
+    "model": "openai/gpt-6-luna",
+    "content": "{\n  \"conditions\": [\n    \"利用人数が4人以上である\",\n    \"個別に会計を行う\",\n    \"利用者全員が学生証を提示できる\",\n    \"利用人数が3人以上である\",\n    \"会計金額が10000円をこえている\"\n  ],\n  \"actions\": [\n    {\n      \"name\": \"最終会計金額\",\n      \"type\": \"value\",\n      \"valueType\": \"float\"\n    }\n  ]\n}",
+    "elapsed_sec": 5.75,
+    "prompt_tokens": 871,
+    "completion_tokens": 423,
+    "total_tokens": 1294,
+    "reasoning_tokens": 308,
+    "reused_from_cache": false,
+    "model_name": "OpenAI: GPT-6 Luna",
+    "prompt": {
+      "extract": "あなたは、要求仕様からデシジョンテーブルに必要な項目を抽出する専門家です。\n\n入力された要求仕様を読み、デシジョンテーブルの「条件部」と「動作部」に使用する項目を抽出してください。\n\n### 要求仕様\n\n{requirements}\n\n### 条件部\n\n* 条件として判定に使用される内容を抽出してください。\n* デシジョンテーブルの条件記述部にそのまま使用できる表現にしてください。\n* 条件の意味を変更したり、要求仕様にない条件を追加したりしないでください。\n\n### 動作部\n\n動作部の項目は、次の2種類に分類してください。\n\n#### value\n\n最終料金、最終得点、処理結果、状態など、最終的な値を出力するものです。\n\n`type` を `\"value\"` とし、`valueType` に次のいずれかを指定してください。\n\n* `\"int\"`：整数\n* `\"float\"`：小数を含む数値\n* `\"string\"`：文字列や状態名\n\n最終的な値が存在する場合は、その最終結果のみを動作部として抽出してください。\n割引の適用、加算、減算、条件を満たすかなど、最終値を求める途中の処理は動作部として抽出しないでください。\n\n例：\n\n要求仕様：\n「会員の場合は料金を10%割引する。クーポンを利用する場合は500円引きし、最終料金を算出する。」\n\nこの場合、\n\n* 「会員である」\n* 「クーポンを利用する」\n\nは条件です。\n\n「10%割引する」「500円引きする」は最終料金を求める途中の処理なので、動作部には抽出しません。\n\n動作部には、\n\n```json\n{\n  \"name\": \"最終料金\",\n  \"type\": \"value\",\n  \"valueType\": \"int\"\n}\n```\n\nを抽出します。\n\n#### action\n\n承認する、通知する、処理を実行するなど、動作の実行有無そのものが結果となるものです。\n\n`type` を `\"action\"` としてください。\nこの項目は後段のデシジョンテーブルで `X / -` により表現されます。\n\n例：\n\n要求仕様：\n「申請額が10万円以上の場合は上長承認を行う。それ以外の場合は通常承認を行う。」\n\nこの場合、\n\n* 「申請額が10万円以上である」\n\nは条件です。\n\n「上長承認を行う」「通常承認を行う」は、実行するかどうか自体が結果なので、\n\n```json\n{\n  \"name\": \"上長承認を行う\",\n  \"type\": \"action\"\n}\n```\n\n```json\n{\n  \"name\": \"通常承認を行う\",\n  \"type\": \"action\"\n}\n```\n\nとして抽出します。\n\n### 出力形式\n\n以下のJSON形式のみを出力してください。\n\n```json\n{\n  \"conditions\": [\n    \"条件1\",\n    \"条件2\"\n  ],\n  \"actions\": [\n    {\n      \"name\": \"動作または最終結果\",\n      \"type\": \"value\",\n      \"valueType\": \"int\"\n    }\n  ]\n}\n```\n\n`type` が `\"action\"` の場合、`valueType` は出力しないでください。\n"
+    },
+    "max_tokens": 0
+  },
+  "decision_items": "{\n  \"conditions\": [\n    \"利用人数が4人以上である\",\n    \"個別に会計を行う\",\n    \"利用者全員が学生証を提示できる\",\n    \"利用人数が3人以上である\",\n    \"会計金額が10000円をこえている\"\n  ],\n  \"actions\": [\n    {\n      \"name\": \"最終会計金額\",\n      \"type\": \"value\",\n      \"valueType\": \"float\"\n    }\n  ]\n}",
+  "framework": {
+    "method": "common_dt_framework",
+    "version": "1.0",
+    "strategy": "full_combination",
+    "conditions": [
+      {
+        "id": "C1",
+        "text": "利用人数が4人以上である"
+      },
+      {
+        "id": "C2",
+        "text": "個別に会計を行う"
+      },
+      {
+        "id": "C3",
+        "text": "利用者全員が学生証を提示できる"
+      },
+      {
+        "id": "C4",
+        "text": "利用人数が3人以上である"
+      },
+      {
+        "id": "C5",
+        "text": "会計金額が10000円をこえている"
+      }
+    ],
+    "actions": [
+      {
+        "name": "最終会計金額",
+        "type": "value",
+        "valueType": "float"
+      }
+    ],
+    "rule_count": 32,
+    "total_combinations": 32,
+    "excluded_count": 0,
+    "rules": [
+      {
+        "rule_id": "R1",
+        "conditions": {
+          "C1": "Y",
+          "C2": "Y",
+          "C3": "Y",
+          "C4": "Y",
+          "C5": "Y"
+        }
+      },
+      {
+        "rule_id": "R2",
+        "conditions": {
+          "C1": "Y",
+          "C2": "Y",
+          "C3": "Y",
+          "C4": "Y",
+          "C5": "N"
+        }
+      },
+      {
+        "rule_id": "R3",
+        "conditions": {
+          "C1": "Y",
+          "C2": "Y",
+          "C3": "Y",
+          "C4": "N",
+          "C5": "Y"
+        }
+      },
+      {
+        "rule_id": "R4",
+        "conditions": {
+          "C1": "Y",
+          "C2": "Y",
+          "C3": "Y",
+          "C4": "N",
+          "C5": "N"
+        }
+      },
+      {
+        "rule_id": "R5",
+        "conditions": {
+          "C1": "Y",
+          "C2": "Y",
+          "C3": "N",
+          "C4": "Y",
+          "C5": "Y"
+        }
+      },
+      {
+        "rule_id": "R6",
+        "conditions": {
+          "C1": "Y",
+          "C2": "Y",
+          "C3": "N",
+          "C4": "Y",
+          "C5": "N"
+        }
+      },
+      {
+        "rule_id": "R7",
+        "conditions": {
+          "C1": "Y",
+          "C2": "Y",
+          "C3": "N",
+          "C4": "N",
+          "C5": "Y"
+        }
+      },
+      {
+        "rule_id": "R8",
+        "conditions": {
+          "C1": "Y",
+          "C2": "Y",
+          "C3": "N",
+          "C4": "N",
+          "C5": "N"
+        }
+      },
+      {
+        "rule_id": "R9",
+        "conditions": {
+          "C1": "Y",
+          "C2": "N",
+          "C3": "Y",
+          "C4": "Y",
+          "C5": "Y"
+        }
+      },
+      {
+        "rule_id": "R10",
+        "conditions": {
+          "C1": "Y",
+          "C2": "N",
+          "C3": "Y",
+          "C4": "Y",
+          "C5": "N"
+        }
+      },
+      {
+        "rule_id": "R11",
+        "conditions": {
+          "C1": "Y",
+          "C2": "N",
+          "C3": "Y",
+          "C4": "N",
+          "C5": "Y"
+        }
+      },
+      {
+        "rule_id": "R12",
+        "conditions": {
+          "C1": "Y",
+          "C2": "N",
+          "C3": "Y",
+          "C4": "N",
+          "C5": "N"
+        }
+      },
+      {
+        "rule_id": "R13",
+        "conditions": {
+          "C1": "Y",
+          "C2": "N",
+          "C3": "N",
+          "C4": "Y",
+          "C5": "Y"
+        }
+      },
+      {
+        "rule_id": "R14",
+        "conditions": {
+          "C1": "Y",
+          "C2": "N",
+          "C3": "N",
+          "C4": "Y",
+          "C5": "N"
+        }
+      },
+      {
+        "rule_id": "R15",
+        "conditions": {
+          "C1": "Y",
+          "C2": "N",
+          "C3": "N",
+          "C4": "N",
+          "C5": "Y"
+        }
+      },
+      {
+        "rule_id": "R16",
+        "conditions": {
+          "C1": "Y",
+          "C2": "N",
+          "C3": "N",
+          "C4": "N",
+          "C5": "N"
+        }
+      },
+      {
+        "rule_id": "R17",
+        "conditions": {
+          "C1": "N",
+          "C2": "Y",
+          "C3": "Y",
+          "C4": "Y",
+          "C5": "Y"
+        }
+      },
+      {
+        "rule_id": "R18",
+        "conditions": {
+          "C1": "N",
+          "C2": "Y",
+          "C3": "Y",
+          "C4": "Y",
+          "C5": "N"
+        }
+      },
+      {
+        "rule_id": "R19",
+        "conditions": {
+          "C1": "N",
+          "C2": "Y",
+          "C3": "Y",
+          "C4": "N",
+          "C5": "Y"
+        }
+      },
+      {
+        "rule_id": "R20",
+        "conditions": {
+          "C1": "N",
+          "C2": "Y",
+          "C3": "Y",
+          "C4": "N",
+          "C5": "N"
+        }
+      },
+      {
+        "rule_id": "R21",
+        "conditions": {
+          "C1": "N",
+          "C2": "Y",
+          "C3": "N",
+          "C4": "Y",
+          "C5": "Y"
+        }
+      },
+      {
+        "rule_id": "R22",
+        "conditions": {
+          "C1": "N",
+          "C2": "Y",
+          "C3": "N",
+          "C4": "Y",
+          "C5": "N"
+        }
+      },
+      {
+        "rule_id": "R23",
+        "conditions": {
+          "C1": "N",
+          "C2": "Y",
+          "C3": "N",
+          "C4": "N",
+          "C5": "Y"
+        }
+      },
+      {
+        "rule_id": "R24",
+        "conditions": {
+          "C1": "N",
+          "C2": "Y",
+          "C3": "N",
+          "C4": "N",
+          "C5": "N"
+        }
+      },
+      {
+        "rule_id": "R25",
+        "conditions": {
+          "C1": "N",
+          "C2": "N",
+          "C3": "Y",
+          "C4": "Y",
+          "C5": "Y"
+        }
+      },
+      {
+        "rule_id": "R26",
+        "conditions": {
+          "C1": "N",
+          "C2": "N",
+          "C3": "Y",
+          "C4": "Y",
+          "C5": "N"
+        }
+      },
+      {
+        "rule_id": "R27",
+        "conditions": {
+          "C1": "N",
+          "C2": "N",
+          "C3": "Y",
+          "C4": "N",
+          "C5": "Y"
+        }
+      },
+      {
+        "rule_id": "R28",
+        "conditions": {
+          "C1": "N",
+          "C2": "N",
+          "C3": "Y",
+          "C4": "N",
+          "C5": "N"
+        }
+      },
+      {
+        "rule_id": "R29",
+        "conditions": {
+          "C1": "N",
+          "C2": "N",
+          "C3": "N",
+          "C4": "Y",
+          "C5": "Y"
+        }
+      },
+      {
+        "rule_id": "R30",
+        "conditions": {
+          "C1": "N",
+          "C2": "N",
+          "C3": "N",
+          "C4": "Y",
+          "C5": "N"
+        }
+      },
+      {
+        "rule_id": "R31",
+        "conditions": {
+          "C1": "N",
+          "C2": "N",
+          "C3": "N",
+          "C4": "N",
+          "C5": "Y"
+        }
+      },
+      {
+        "rule_id": "R32",
+        "conditions": {
+          "C1": "N",
+          "C2": "N",
+          "C3": "N",
+          "C4": "N",
+          "C5": "N"
+        }
+      }
+    ],
+    "exclusions": [],
+    "excluded_rules": []
+  },
+  "framework_error": "",
+  "max_conditions": 6,
+  "status": "approved",
+  "approved_at": "2026-11-20T14:55:43",
+  "note": "",
+  "edited": false,
+  "parent_id": "",
+  "exclusions": [],
+  "exclusion_warnings": [],
+  "tool_version": {
+    "commit": "04026382e3dfbc43b65143d6360c578511067ba1",
+    "dirty": true,
+    "python": "3.13.12"
+  }
+}

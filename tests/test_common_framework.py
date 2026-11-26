@@ -97,7 +97,7 @@ class FakeClient(OpenRouterClient):
         self.calls: list[tuple[str, str, dict]] = []
         self._lock = threading.Lock()
 
-    def chat(self, model, prompt, temperature=None, max_tokens=None, response_format=None):
+    def chat(self, model, prompt, temperature=None, max_tokens=None, response_format=None, purpose=""):
         with self._lock:
             self.calls.append((model, prompt, {"max_tokens": max_tokens}))
         content = self.responder(model, prompt)
@@ -125,6 +125,7 @@ class TempOutputsMixin:
         self.patches = [
             mock.patch.object(file_manager, "OUTPUTS_DIR", self.tmp / "outputs"),
             mock.patch.object(config_manager, "CACHE_DIR", self.tmp / "outputs" / "_cache"),
+            mock.patch.object(config_manager, "FRAMEWORKS_DIR", self.tmp / "frameworks"),
         ]
         for p in self.patches:
             p.start()

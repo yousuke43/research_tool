@@ -15,7 +15,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from services import dt_framework, result_cache
+from services import dt_framework, result_cache, token_usage
 from services.dt_framework import CommonFramework, FrameworkRule
 from services.openrouter_client import KeyLimitError, OpenRouterClient, OpenRouterError
 from utils.file_manager import load_prompt, render_prompt
@@ -143,7 +143,9 @@ def fill_framework(
         else:
             started = time.perf_counter()
             try:
-                chat = client.chat(model_id, prompt, max_tokens=max_tokens or None)
+                chat = client.chat(
+                    model_id, prompt, max_tokens=max_tokens or None, purpose=token_usage.PURPOSE_FRAMEWORK
+                )
             except OpenRouterError as exc:
                 record.elapsed_sec = time.perf_counter() - started
                 record.api_error = str(exc)
